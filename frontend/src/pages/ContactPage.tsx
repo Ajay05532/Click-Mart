@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Container } from '../components/layout/Container.tsx'
 import { MailIcon, PhoneIcon, PinIcon } from '../components/icons.tsx'
 import { PageHero } from '../components/ui/PageHero.tsx'
+import { storeAddress, storeEmail, storePhone, storePhoneTel } from '../lib/store.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function ContactPage() {
@@ -21,13 +22,16 @@ export function ContactPage() {
           <h2 className="font-semibold">ClickMart desk</h2>
           <ul className="mt-4 space-y-3 text-sm text-muted">
             <li className="flex gap-2">
-              <PhoneIcon className="size-4 text-brand" /> +91 80 4567 8900
+              <PhoneIcon className="mt-0.5 size-4 shrink-0 text-brand" />
+              <a href={`tel:${storePhoneTel}`} className="hover:text-ink">{storePhone}</a>
             </li>
             <li className="flex gap-2">
-              <MailIcon className="size-4 text-brand" /> hello@clickmart.com
+              <MailIcon className="mt-0.5 size-4 shrink-0 text-brand" />
+              <a href={`mailto:${storeEmail}`} className="hover:text-ink">{storeEmail}</a>
             </li>
             <li className="flex gap-2">
-              <PinIcon className="size-4 text-brand" /> 42, Residency Road, Bengaluru 560025
+              <PinIcon className="mt-0.5 size-4 shrink-0 text-brand" />
+              <span>{storeAddress}</span>
             </li>
           </ul>
           <p className="mt-4 text-sm text-muted">Monday to Saturday, 9:00 to 18:00 IST.</p>

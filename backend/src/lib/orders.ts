@@ -254,7 +254,7 @@ export async function refundOrder(orderId: string) {
 const defaultNote: Record<OrderStatus, string> = {
   PLACED: 'Order placed',
   CONFIRMED: 'Order confirmed',
-  PACKED: 'Packed fresh at our Bengaluru kitchen',
+  PACKED: 'Packed fresh at our Patna desk',
   SHIPPED: 'Handed to the courier',
   OUT_FOR_DELIVERY: 'Out for delivery today',
   DELIVERED: 'Delivered. Enjoy!',

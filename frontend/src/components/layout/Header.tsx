@@ -5,6 +5,7 @@ import { useCart } from '../../context/CartContext.tsx'
 import { useWishlist } from '../../context/WishlistContext.tsx'
 import { categories, featuredPack, products } from '../../data/products.ts'
 import { formatPrice } from '../../lib/money.ts'
+import { storePhone, storePhoneTel } from '../../lib/store.ts'
 import { ProductMedia } from '../product/ProductMedia.tsx'
 import {
   CartIcon,
@@ -107,9 +108,9 @@ export function Header() {
               </Link>
             </p>
             <div className="flex shrink-0 items-center gap-3">
-              <a href="tel:+918045678900" className="hidden items-center gap-1 sm:inline-flex">
+              <a href={`tel:${storePhoneTel}`} className="hidden items-center gap-1 sm:inline-flex">
                 <PhoneIcon className="size-3.5" />
-                +91 80 4567 8900
+                {storePhone}
               </a>
               <Link to="/contact" className="hidden sm:inline">
                 Help

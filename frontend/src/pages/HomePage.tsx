@@ -21,7 +21,7 @@ const promises = [
 const steps = [
   { step: '01', title: 'Pick your pouch', text: 'Choose the nut, the grade and the pack size that suits your pantry.' },
   { step: '02', title: 'We pack it fresh', text: 'Orders are sealed after they are placed, never pulled from a warm shelf.' },
-  { step: '03', title: 'Track it to your door', text: 'Follow every step live, from our Bengaluru kitchen to your doorstep.' },
+  { step: '03', title: 'Track it to your door', text: 'Follow every step live, from our Patna packing desk to your doorstep.' },
 ]
 
 

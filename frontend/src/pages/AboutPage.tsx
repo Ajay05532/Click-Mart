@@ -20,7 +20,7 @@ export function AboutPage() {
         <article className="rounded-2xl bg-white p-6 shadow-sm">
           <h2 className="text-xl font-bold">From the packing table to your pantry</h2>
           <p className="mt-3 leading-7 text-muted">
-            ClickMart started as a small packing desk for Nouriva dry fruits in Bengaluru. Almonds, cashews, raisins and walnuts were the first four pouches. The catalogue is larger now, but the rule is the same: if we would not keep it at home, it does not go in the box.
+            ClickMart started as a small packing desk in Patna. Almonds, cashews, raisins and walnuts were the first four pouches. The catalogue is larger now, but the rule is the same: if we would not keep it at home, it does not go in the box.
           </p>
           <p className="mt-3 leading-7 text-muted">
             Orders are packed after they are placed, not pulled from a warm warehouse shelf. That is why a pouch of walnuts still smells like walnuts.

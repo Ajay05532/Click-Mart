@@ -79,7 +79,7 @@ export function createOrderId() {
 
 export const trackingStages = [
   { key: 'placed', label: 'Order placed', note: 'We have received your order.', afterMin: 0, offsetH: 0 },
-  { key: 'packed', label: 'Packed fresh', note: 'Sealed and quality checked in Bengaluru.', afterMin: 1, offsetH: 6 },
+  { key: 'packed', label: 'Packed fresh', note: 'Sealed and quality checked in Patna.', afterMin: 1, offsetH: 6 },
   { key: 'shipped', label: 'Shipped', note: 'Handed to our courier partner.', afterMin: 3, offsetH: 20 },
   { key: 'out', label: 'Out for delivery', note: 'Your pouches are on the way to you.', afterMin: 6, offsetH: 68 },
   { key: 'delivered', label: 'Delivered', note: 'Enjoy your dry fruits!', afterMin: 10, offsetH: 74 },

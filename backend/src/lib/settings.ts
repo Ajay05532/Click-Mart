@@ -2,9 +2,9 @@ import { prisma } from './prisma.js'
 
 export const settingDefaults = {
   storeName: 'ClickMart',
-  supportEmail: 'hello@clickmart.com',
-  supportPhone: '+91 80 4567 8900',
-  address: '42, Residency Road, Bengaluru 560025',
+  supportEmail: 'tanusharmaa79@gmail.com',
+  supportPhone: '+91 93048 37512',
+  address: 'Ground Floor, Kashyap Sadan, Near Shemford School, Sampatchak, Jaganpura–Udaini Road, Patna, Bihar 804453',
   freeShippingThreshold: 499,
   shippingFee: 49,
   codEnabled: true,

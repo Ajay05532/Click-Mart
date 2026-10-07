@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { categories } from '../../data/products.ts'
+import { storeAddress, storeEmail, storePhone, storePhoneTel } from '../../lib/store.ts'
 import { MailIcon, PhoneIcon, PinIcon } from '../icons.tsx'
 import { Container } from './Container.tsx'
 import { Logo } from './Logo.tsx'
@@ -86,24 +87,24 @@ export function Footer() {
           <div className="md:col-span-4">
             <Logo light />
             <p className="mt-5 max-w-xs text-sm leading-6 text-white/70">
-              Premium dry fruits, nuts and seeds, packed in Bengaluru and sent across India.
+              Premium dry fruits, nuts and seeds, packed in Patna and sent across India.
             </p>
             <ul className="mt-6 space-y-3 text-sm text-white/75">
               <li>
-                <a href="tel:+918045678900" className="inline-flex items-center gap-2 hover:text-white">
+                <a href={`tel:${storePhoneTel}`} className="inline-flex items-center gap-2 hover:text-white">
                   <PhoneIcon className="size-4 text-accent" />
-                  +91 80 4567 8900
+                  {storePhone}
                 </a>
               </li>
               <li>
-                <a href="mailto:hello@clickmart.com" className="inline-flex items-center gap-2 hover:text-white">
+                <a href={`mailto:${storeEmail}`} className="inline-flex items-center gap-2 hover:text-white">
                   <MailIcon className="size-4 text-accent" />
-                  hello@clickmart.com
+                  {storeEmail}
                 </a>
               </li>
               <li className="flex items-start gap-2">
                 <PinIcon className="mt-0.5 size-4 shrink-0 text-accent" />
-                <span>42, Residency Road, Bengaluru 560025</span>
+                <span>{storeAddress}</span>
               </li>
             </ul>
           </div>

@@ -7,6 +7,7 @@ import { categories, featuredPack, products } from '../../data/products.ts'
 import { coupons } from '../../data/promotions.ts'
 import { reviews } from '../../data/reviews.ts'
 import { formatNumber, formatPrice } from '../../lib/money.ts'
+import { storeAddress, storeEmail, storePhone } from '../../lib/store.ts'
 import { loadPlacedOrders } from '../../lib/orders.ts'
 
 function Panel({ title, children }: { title?: string; children: ReactNode }) {
@@ -252,7 +253,15 @@ export function SettingsAdminPage() {
       </label>
       <label className="mt-4 block text-sm">
         Support email
-        <input defaultValue="hello@clickmart.com" className="mt-1 h-10 w-full rounded-lg border border-line px-3" />
+        <input defaultValue={storeEmail} type="email" className="mt-1 h-10 w-full rounded-lg border border-line px-3" />
+      </label>
+      <label className="mt-4 block text-sm">
+        Phone
+        <input defaultValue={storePhone} className="mt-1 h-10 w-full rounded-lg border border-line px-3" />
+      </label>
+      <label className="mt-4 block text-sm">
+        Address
+        <textarea defaultValue={storeAddress} rows={3} className="mt-1 w-full rounded-lg border border-line px-3 py-2" />
       </label>
       <label className="mt-4 block text-sm">
         Free shipping above (₹)
