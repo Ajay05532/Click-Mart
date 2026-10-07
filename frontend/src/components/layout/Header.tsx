@@ -133,26 +133,31 @@ export function Header() {
         <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-2 sm:px-6">
           <Logo />
         <nav className="hidden shrink-0 items-center gap-0.5 lg:flex" aria-label="Primary">
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => {
-                const current = new URLSearchParams(location.search).get('category')
-                const match = categories.find((category) => category.id === current)
-                if (match) setMenuCategory(match.id)
-                toggle('shop')
-              }}
+          <div
+            className="relative"
+            onMouseEnter={() => {
+              const current = new URLSearchParams(location.search).get('category')
+              const match = categories.find((category) => category.id === current)
+              if (match) setMenuCategory(match.id)
+              setPanel('shop')
+            }}
+            onMouseLeave={() => setPanel((current) => (current === 'shop' ? null : current))}
+          >
+            <Link
+              to="/shop"
+              onClick={() => setPanel(null)}
               aria-expanded={panel === 'shop'}
               aria-haspopup="true"
               className={`inline-flex items-center gap-1 rounded-full px-3.5 py-2 text-sm font-semibold transition ${
-                panel === 'shop' ? 'bg-canvas text-ink' : 'text-ink/80 hover:bg-canvas hover:text-ink'
+                panel === 'shop' || location.pathname === '/shop' ? 'bg-canvas text-ink' : 'text-ink/80 hover:bg-canvas hover:text-ink'
               }`}
             >
               Shop
               <ChevronIcon dir="down" className={`size-4 transition ${panel === 'shop' ? 'rotate-180' : ''}`} />
-            </button>
+            </Link>
             {panel === 'shop' && (
-              <div className="motion-panel absolute top-full left-0 z-30 mt-2 flex w-[min(40rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-line bg-white text-ink shadow-pop">
+              <div className="absolute top-full left-0 z-30 pt-2">
+              <div className="motion-panel flex w-[min(40rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-line bg-white text-ink shadow-pop">
                 <div className="flex max-h-[26rem] w-56 shrink-0 flex-col bg-canvas p-2">
                   <input
                     value={menuFilter}
@@ -188,6 +193,7 @@ export function Header() {
                   category={categories.find((category) => category.id === menuCategory) ?? categories[0]}
                   onNavigate={() => setPanel(null)}
                 />
+              </div>
               </div>
             )}
           </div>
