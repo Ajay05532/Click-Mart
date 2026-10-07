@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: clickmart-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: clickmart
+      POSTGRES_PASSWORD: clickmart
+      POSTGRES_DB: clickmart
+    ports:
+      - '5433:5432'
+    volumes:
+      - clickmart-pgdata:/var/lib/postgresql/data
+volumes:
+  clickmart-pgdata:
