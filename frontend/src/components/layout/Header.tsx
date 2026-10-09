@@ -3,7 +3,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext.tsx'
 import { useCart } from '../../context/CartContext.tsx'
 import { useWishlist } from '../../context/WishlistContext.tsx'
-import { categories, featuredPack, products } from '../../data/products.ts'
+import { featuredPack, useCategories, useProducts, useProductsByIds } from '../../lib/catalog.ts'
 import { formatPrice } from '../../lib/money.ts'
 import { storePhone, storePhoneTel } from '../../lib/store.ts'
 import { ProductMedia } from '../product/ProductMedia.tsx'
@@ -18,6 +18,7 @@ import {
   UserIcon,
 } from '../icons.tsx'
 import { ChevronIcon } from '../icons.tsx'
+import type { Category } from '../../types.ts'
 import { Logo } from './Logo.tsx'
 
 // Desktop bar: shopping-first, like most e-commerce stores. Info pages live in the footer and mobile menu.
@@ -51,7 +52,9 @@ export function Header() {
   const [pinMessage, setPinMessage] = useState('')
   const [hideOffer, setHideOffer] = useState(() => sessionStorage.getItem('clickmart-offer') === 'hide')
   const [route, setRoute] = useState(location.pathname)
-  const [menuCategory, setMenuCategory] = useState(categories[0].id)
+  const categories = useCategories().data ?? []
+  const [menuCategory, setMenuCategory] = useState('')
+  const [debounced, setDebounced] = useState('')
   const [menuFilter, setMenuFilter] = useState('')
 
   if (route !== location.pathname) {
@@ -69,11 +72,15 @@ export function Header() {
   }, [])
 
   const query = term.trim().toLowerCase()
-  const suggestions = (query
-    ? products.filter((product) => `${product.name} ${product.category}`.toLowerCase().includes(query))
-    : products.filter((product) => product.bestseller)
-  ).slice(0, 6)
-  const savedProducts = products.filter((product) => wishlist.ids.includes(product.id))
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(query), 250)
+    return () => window.clearTimeout(timer)
+  }, [query])
+  // Live suggestions come from the server (what is on sale, in stock, spelled how the shop spells it).
+  const found = useProducts({ q: debounced, pageSize: 6 }, panel === 'search' && debounced.length > 0)
+  const popular = useProducts({ bestseller: true, pageSize: 6 }, panel === 'search' && debounced.length === 0)
+  const suggestions = ((debounced ? found.data?.items : popular.data?.items) ?? []).slice(0, 6)
+  const savedProducts = useProductsByIds(panel === 'wishlist' ? wishlist.ids : []).data ?? []
 
   const toggle = (next: Panel) => setPanel((current) => (current === next ? null : next))
 
@@ -169,7 +176,7 @@ export function Header() {
                   />
                   <div className="min-h-0 flex-1 overflow-y-auto">
                   {categories.filter((category) => category.name.toLowerCase().includes(menuFilter.trim().toLowerCase())).map((category) => {
-                    const active = category.id === menuCategory
+                    const active = category.id === (menuCategory || categories[0]?.id)
                     return (
                       <Link
                         key={category.id}
@@ -191,7 +198,7 @@ export function Header() {
                   </div>
                 </div>
                 <CategoryPane
-                  category={categories.find((category) => category.id === menuCategory) ?? categories[0]}
+                  category={categories.find((category) => category.id === menuCategory) ?? categories[0]!}
                   onNavigate={() => setPanel(null)}
                 />
               </div>
@@ -439,7 +446,7 @@ export function Header() {
                             </p>
                             <p className="text-sm font-bold">{formatPrice(line.lineTotal)}</p>
                           </div>
-                          <button type="button" onClick={() => cart.removeItem(line.productId, line.size)} className="text-xs text-rose-600">
+                          <button type="button" onClick={() => cart.removeItem(line.variantId)} className="text-xs text-rose-600">
                             Remove
                           </button>
                         </li>
@@ -455,13 +462,14 @@ export function Header() {
                       View cart
                     </Link>
                     <Link
-                      to="/checkout"
+                      to={user ? '/checkout' : '/login'}
+                      state={user ? undefined : { from: '/checkout' }}
                       onClick={() => setPanel(null)}
                       className={`btn mt-2 w-full ${
                         cart.lines.length === 0 ? 'pointer-events-none bg-slate-300 text-white' : 'btn-accent'
                       }`}
                     >
-                      Checkout
+                      {user ? 'Checkout' : 'Login to checkout'}
                     </Link>
                   </div>
                 </div>
@@ -557,7 +565,7 @@ function CategoryPane({
   category,
   onNavigate,
 }: {
-  category: (typeof categories)[number]
+  category: Category
   onNavigate: () => void
 }) {
   return (
@@ -577,9 +585,7 @@ function CategoryPane({
       </div>
       <div className="mt-4 grid grid-cols-2 gap-2">
         {category.subcategories.map((sub) => {
-          const count = products.filter(
-            (product) => product.category === category.id && product.subcategory === sub.id,
-          ).length
+          const count = sub.productCount ?? 0
           return (
             <Link
               key={sub.id}

@@ -1,4 +1,3 @@
-import type { ArtTone } from '../../types.ts'
 import { ProductArt } from './ProductArt.tsx'
 
 export function ProductMedia({
@@ -9,7 +8,7 @@ export function ProductMedia({
 }: {
   name: string
   image: string | null
-  art: ArtTone
+  art: string
   className?: string
 }) {
   if (image) {

@@ -1,10 +1,9 @@
-import type { Category, Offer, Order, OrderEvent, OrderItem, Product, ProductVariant } from '@prisma/client'
+import type { Row } from './db.js'
 import { bestOfferPrice } from './pricing.js'
+import type { Offer, Product, Variant } from './types.js'
 
-type ProductWithRels = Product & { variants: ProductVariant[]; category?: Category; subcategory?: Category | null }
-
-export function serializeProduct(product: ProductWithRels, offers: Offer[]) {
-  const variants = product.variants.filter((variant) => variant.isActive).sort((a, b) => a.sortOrder - b.sortOrder)
+export function serializeProduct(product: Product, offers: Offer[]) {
+  const variants = (product.variants ?? []).filter((variant: Variant) => variant.isActive).sort((a, b) => a.sortOrder - b.sortOrder)
   const packs = variants.map((variant) => {
     const offer = bestOfferPrice(offers, product.id, product.categoryId, variant.price)
     return {
@@ -23,16 +22,16 @@ export function serializeProduct(product: ProductWithRels, offers: Offer[]) {
     slug: product.slug,
     name: product.name,
     category: product.categoryId,
-    categoryName: product.category?.name,
+    categoryName: product.category?.name as string | undefined,
     subcategory: product.subcategoryId,
     rating: product.ratingAvg,
     reviewCount: product.ratingCount,
-    image: product.images[0] ?? null,
-    images: product.images,
+    image: product.images?.[0] ?? null,
+    images: product.images ?? [],
     art: product.art,
     blurb: product.blurb,
     description: product.description,
-    highlights: product.highlights,
+    highlights: product.highlights ?? [],
     nutrition: product.nutrition,
     packs,
     featuredSize: product.featuredSize ?? packs[0]?.size ?? null,
@@ -45,18 +44,26 @@ export function serializeProduct(product: ProductWithRels, offers: Offer[]) {
 
 export const orderCode = (number: number) => `ORD-${number}`
 
-type OrderFull = Order & { items: OrderItem[]; events: OrderEvent[] }
+const time = (value: string) => new Date(value).getTime()
 
-export function serializeOrder(order: OrderFull) {
+/** Order keeps a text snapshot of what was paid with; the full record is in the payment schema. */
+function paymentSummary(order: Row) {
+  return { detail: (order.paymentDetail as string | null) ?? null, status: order.paymentStatus }
+}
+
+export function serializeOrder(order: Row) {
+  const items = (order.items ?? []) as Row[]
+  const events = (order.events ?? []) as Row[]
   return {
-    id: order.id,
+    id: order.id as string,
     code: orderCode(order.number),
     status: order.status,
     paymentStatus: order.paymentStatus,
     paymentMethod: order.paymentMethod,
+    payment: paymentSummary(order),
     customer: { name: order.customerName, email: order.email, phone: order.phone },
     address: { line: order.addressLine, city: order.city, state: order.state, pin: order.pin },
-    items: order.items.map((item) => ({
+    items: items.map((item) => ({
       id: item.id,
       productId: item.productId,
       name: item.name,
@@ -76,12 +83,8 @@ export function serializeOrder(order: OrderFull) {
     couponCode: order.couponCode,
     carrier: order.carrier,
     trackingNumber: order.trackingNumber,
-    events: [...order.events].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).map((event) => ({
-      status: event.status,
-      note: event.note,
-      at: event.createdAt,
-    })),
+    events: [...events].sort((a, b) => time(a.createdAt) - time(b.createdAt)).map((event) => ({ status: event.status, note: event.note, at: event.createdAt })),
     placedAt: order.createdAt,
-    estimatedDelivery: new Date(order.createdAt.getTime() + 4 * 86400000),
+    estimatedDelivery: new Date(time(order.createdAt) + 4 * 86400000).toISOString(),
   }
 }

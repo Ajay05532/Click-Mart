@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '../../context/AuthContext.tsx'
 import { useCart } from '../../context/CartContext.tsx'
-import { coupons } from '../../data/promotions.ts'
-import { FREE_SHIPPING_AT, formatPrice } from '../../lib/money.ts'
+import { useActiveCoupons, useStoreSettings } from '../../lib/catalog.ts'
+import { formatPrice } from '../../lib/money.ts'
 import { LockIcon, TagIcon } from '../icons.tsx'
 import { FreeShippingBar } from '../ui/Primitives.tsx'
 import { ProductMedia } from '../product/ProductMedia.tsx'
@@ -16,10 +17,13 @@ export function OrderSummary({
   showItems?: boolean
   children?: React.ReactNode
 }) {
-  const { lines, subtotal, discount, shipping, total, coupon, applyCoupon, clearCoupon } = useCart()
+  const { user } = useAuth()
+  const { lines, subtotal, discount, shipping, total, coupon, savings, pricing, applyCoupon, clearCoupon } = useCart()
+  const settings = useStoreSettings()
+  const available = useActiveCoupons().data ?? []
+  const [applying, setApplying] = useState(false)
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const savings = lines.reduce((sum, line) => sum + (line.mrp - line.unitPrice) * line.quantity, 0) + discount
 
   return (
     <aside className="card h-fit p-5 sm:p-6 lg:sticky lg:top-32">
@@ -47,16 +51,18 @@ export function OrderSummary({
 
       {!showItems && subtotal > 0 && (
         <div className="mt-4 rounded-2xl bg-canvas p-4">
-          <FreeShippingBar subtotal={subtotal} goal={FREE_SHIPPING_AT} />
+          <FreeShippingBar subtotal={subtotal} goal={settings.freeShippingThreshold} />
         </div>
       )}
 
       <form
         className="mt-5"
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault()
           if (!code.trim()) return
-          setError(applyCoupon(code))
+          setApplying(true)
+          setError(await applyCoupon(code))
+          setApplying(false)
           setCode('')
         }}
       >
@@ -71,7 +77,7 @@ export function OrderSummary({
               className="field h-11! pl-10! tracking-wider"
             />
           </div>
-          <button type="submit" className="btn btn-soft btn-sm !px-5">
+          <button type="submit" disabled={applying} className="btn btn-soft btn-sm !px-5">
             Apply
           </button>
         </div>
@@ -80,7 +86,7 @@ export function OrderSummary({
       {coupon ? (
         <div className="motion-panel mt-3 flex items-center justify-between rounded-xl bg-emerald-50 px-3 py-2 text-xs">
           <span className="font-bold text-success">
-            ✓ {coupon.code} applied · {coupon.label}
+            ✓ {coupon.code} applied
           </span>
           <button type="button" onClick={clearCoupon} className="font-bold text-rose-600">
             Remove
@@ -88,11 +94,11 @@ export function OrderSummary({
         </div>
       ) : (
         <div className="mt-3 flex flex-wrap gap-1.5">
-          {coupons.map((item) => (
+          {available.map((item) => (
             <button
               key={item.code}
               type="button"
-              onClick={() => setError(applyCoupon(item.code))}
+              onClick={async () => setError(await applyCoupon(item.code))}
               className="rounded-full border border-dashed border-accent/50 bg-orange-50 px-3 py-1 text-[11px] font-extrabold tracking-wide text-accent-dark transition hover:bg-orange-100"
               title={item.label}
             >
@@ -105,7 +111,7 @@ export function OrderSummary({
       <dl className="mt-5 space-y-3 border-t border-dashed border-line pt-5 text-sm">
         <div className="flex justify-between">
           <dt className="text-muted">Subtotal</dt>
-          <dd className="font-semibold">{formatPrice(subtotal)}</dd>
+          <dd className="font-semibold">{pricing && !subtotal ? '…' : formatPrice(subtotal)}</dd>
         </div>
         {discount > 0 && (
           <div className="flex justify-between text-success">
@@ -132,10 +138,11 @@ export function OrderSummary({
 
       {showCheckout && (
         <Link
-          to="/checkout"
+          to={user ? '/checkout' : '/login'}
+          state={user ? undefined : { from: '/checkout' }}
           className={`btn btn-lg mt-5 w-full ${lines.length === 0 ? 'pointer-events-none bg-slate-300 text-white' : 'btn-accent'}`}
         >
-          <LockIcon className="size-4" /> Secure checkout
+          <LockIcon className="size-4" /> {user ? 'Secure checkout' : 'Login to checkout'}
         </Link>
       )}
       {children}

@@ -1,7 +1,7 @@
-import type { Coupon, Offer, Prisma } from '@prisma/client'
 import { badRequest, conflict } from './errors.js'
-import { prisma } from './prisma.js'
+import { count, from, rows } from './db.js'
 import { getSettings } from './settings.js'
+import type { Coupon, Offer, Product, Variant } from './types.js'
 
 export type CartInput = { variantId: string; quantity: number }
 
@@ -20,6 +20,8 @@ export type PricedLine = {
   unitPrice: number
   offerName: string | null
   stock: number
+  hsnCode: string | null
+  gstPercent: number
 }
 
 export type Quote = {
@@ -34,17 +36,12 @@ export type Quote = {
   savings: number
 }
 
-export function activeOfferWhere(now = new Date()): Prisma.OfferWhereInput {
-  return {
-    isActive: true,
-    AND: [
-      { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
-      { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
-    ],
-  }
+/** Offers that are switched on and inside their start/end window right now. */
+export async function loadActiveOffers(): Promise<Offer[]> {
+  const now = Date.now()
+  const all = await rows<Offer>(from('Offer').select('*').eq('isActive', true))
+  return all.map((offer) => ({ ...offer, categoryIds: offer.categoryIds ?? [], productIds: offer.productIds ?? [] })).filter((offer) => (!offer.startsAt || new Date(offer.startsAt).getTime() <= now) && (!offer.endsAt || new Date(offer.endsAt).getTime() >= now))
 }
-
-export const loadActiveOffers = () => prisma.offer.findMany({ where: activeOfferWhere() })
 
 export function offerApplies(offer: Offer, productId: string, categoryId: string) {
   const targeted = offer.productIds.length > 0 || offer.categoryIds.length > 0
@@ -71,10 +68,7 @@ export async function priceItems(items: CartInput[]): Promise<PricedLine[]> {
   for (const item of items) merged.set(item.variantId, (merged.get(item.variantId) ?? 0) + item.quantity)
 
   const [variants, offers] = await Promise.all([
-    prisma.productVariant.findMany({
-      where: { id: { in: [...merged.keys()] } },
-      include: { product: true },
-    }),
+    rows<Variant & { product: Product }>(from('ProductVariant').select('*, product:Product(*)').in('id', [...merged.keys()])),
     loadActiveOffers(),
   ])
 
@@ -98,7 +92,7 @@ export async function priceItems(items: CartInput[]): Promise<PricedLine[]> {
       categoryId: variant.product.categoryId,
       name: variant.product.name,
       slug: variant.product.slug,
-      image: variant.product.images[0] ?? null,
+      image: variant.product.images?.[0] ?? null,
       art: variant.product.art,
       size: variant.size,
       quantity,
@@ -107,23 +101,27 @@ export async function priceItems(items: CartInput[]): Promise<PricedLine[]> {
       unitPrice: offer?.price ?? variant.price,
       offerName: offer?.name ?? null,
       stock: variant.stock,
+      hsnCode: variant.product.hsnCode ?? null,
+      gstPercent: variant.product.gstPercent ?? 0,
     }
   })
 }
 
 export async function findCoupon(code: string) {
-  return prisma.coupon.findUnique({ where: { code: code.trim().toUpperCase() } })
+  const data = await rows<Coupon>(from('Coupon').select('*').eq('code', code.trim().toUpperCase()).limit(1))
+  const coupon = data[0]
+  return coupon ? { ...coupon, categoryIds: coupon.categoryIds ?? [], productIds: coupon.productIds ?? [] } : null
 }
 
 /** Throws a 400 with a customer-readable reason when the coupon cannot be used. */
 export async function validateCoupon(coupon: Coupon | null, lines: PricedLine[], userId?: string) {
   const now = new Date()
   if (!coupon || !coupon.isActive) throw badRequest('That coupon code is not valid')
-  if (coupon.startsAt && coupon.startsAt > now) throw badRequest('That coupon is not active yet')
-  if (coupon.endsAt && coupon.endsAt < now) throw badRequest('That coupon has expired')
+  if (coupon.startsAt && new Date(coupon.startsAt) > now) throw badRequest('That coupon is not active yet')
+  if (coupon.endsAt && new Date(coupon.endsAt) < now) throw badRequest('That coupon has expired')
   if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit) throw badRequest('That coupon has been fully claimed')
   if (coupon.perUserLimit !== null && userId) {
-    const used = await prisma.couponRedemption.count({ where: { couponId: coupon.id, userId } })
+    const used = await count(from('CouponRedemption').select('id', { count: 'exact', head: true }).eq('couponId', coupon.id).eq('userId', userId))
     if (used >= coupon.perUserLimit) throw badRequest('You have already used this coupon')
   }
   const eligible = eligibleSubtotal(coupon, lines)

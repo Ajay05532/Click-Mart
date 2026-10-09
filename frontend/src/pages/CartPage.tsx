@@ -8,17 +8,15 @@ import { Breadcrumbs } from '../components/ui/Breadcrumbs.tsx'
 import { EmptyState, Stepper } from '../components/ui/Primitives.tsx'
 import { QuantityInput } from '../components/ui/QuantityInput.tsx'
 import { useCart } from '../context/CartContext.tsx'
-import { products } from '../data/products.ts'
+import { useProducts } from '../lib/catalog.ts'
 import { discountPercent, formatPrice } from '../lib/money.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function CartPage() {
   useDocumentTitle('Your Cart')
-  const { lines, count, updateQty, removeItem } = useCart()
-  const suggestions = products
-    .filter((product) => product.inStock && !lines.some((line) => line.productId === product.id))
-    .sort((a, b) => b.sold - a.sold)
-    .slice(0, 4)
+  const { lines, count, pricing, updateQty, removeItem } = useCart()
+  const popular = useProducts({ sort: 'popular', pageSize: 12 })
+  const suggestions = (popular.data?.items ?? []).filter((product) => product.inStock && !lines.some((line) => line.productId === product.id)).slice(0, 4)
 
   return (
     <div className="bg-canvas">
@@ -27,14 +25,14 @@ export function CartPage() {
         <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
           <h1 className="text-3xl font-extrabold tracking-tight">
             Your cart{' '}
-            {lines.length > 0 && <span className="text-lg font-bold text-muted">({count} {count === 1 ? 'item' : 'items'})</span>}
+            {count > 0 && <span className="text-lg font-bold text-muted">({count} {count === 1 ? 'item' : 'items'})</span>}
           </h1>
           <div className="w-full max-w-sm">
             <Stepper steps={['Cart', 'Details', 'Payment']} current={0} />
           </div>
         </div>
 
-        {lines.length === 0 ? (
+        {count === 0 ? (
           <div className="mt-10">
             <EmptyState
               icon={<CartIcon className="size-9" />}
@@ -42,6 +40,10 @@ export function CartPage() {
               text="Looks like you have not picked any pouches yet. Our bestsellers are a great place to start."
               action={{ to: '/shop', label: 'Start shopping' }}
             />
+          </div>
+        ) : lines.length === 0 && pricing ? (
+          <div className="grid min-h-60 place-items-center">
+            <span className="motion-spin block size-10 rounded-full border-4 border-brand-soft border-t-brand" role="status" aria-label="Loading your cart" />
           </div>
         ) : (
           <div className="mt-8 grid items-start gap-6 lg:grid-cols-[1fr_380px]">
@@ -64,7 +66,7 @@ export function CartPage() {
                           </div>
                           <button
                             type="button"
-                            onClick={() => removeItem(line.productId, line.size)}
+                            onClick={() => removeItem(line.variantId)}
                             aria-label={`Remove ${line.name}`}
                             className="grid size-9 shrink-0 place-items-center rounded-full text-muted transition hover:bg-rose-50 hover:text-rose-600"
                           >
@@ -72,7 +74,7 @@ export function CartPage() {
                           </button>
                         </div>
                         <div className="mt-auto flex flex-wrap items-end justify-between gap-3 pt-3">
-                          <QuantityInput value={line.quantity} onChange={(quantity) => updateQty(line.productId, line.size, quantity)} />
+                          <QuantityInput value={line.quantity} max={Math.max(1, line.stock)} onChange={(quantity) => updateQty(line.variantId, quantity)} />
                           <div className="text-right">
                             <p className="text-lg font-extrabold">{formatPrice(line.lineTotal)}</p>
                             {off > 0 && (

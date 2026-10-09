@@ -1,3 +1,5 @@
+> **Historical note:** this was the original plan. The data layer later moved from Prisma to Supabase's REST API (see CLAUDE.md "Decisions log"); ignore the Prisma references below.
+
 # ClickMart: Backend + Admin Dashboard Plan
 
 ## 1. Where we are today

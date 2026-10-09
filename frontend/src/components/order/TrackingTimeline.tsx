@@ -1,32 +1,25 @@
 import { BoxIcon, CheckIcon, TruckIcon } from '../icons.tsx'
-import { trackingStages, type OrderRecord } from '../../lib/orders.ts'
+import { formatDateTime, isEnded, stageOf, stageTime, trackingStages, type TrackView } from '../../lib/orders.ts'
 
 const stageIcons = [CheckIcon, BoxIcon, TruckIcon, TruckIcon, CheckIcon]
 
-function stageTime(record: OrderRecord, offsetH: number) {
-  return new Date(record.placedAt + offsetH * 3600000).toLocaleString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
-}
-
-export function TrackingTimeline({ record, stage }: { record: OrderRecord; stage: number }) {
+export function TrackingTimeline({ view }: { view: TrackView }) {
+  const stage = stageOf(view)
+  const ended = isEnded(view.status)
+  const placed = new Date(view.placedAt).getTime()
   return (
     <ol className="relative">
       {trackingStages.map((item, index) => {
-        const done = index < stage || (index === stage && stage === trackingStages.length - 1)
+        const done = index < stage || (index === stage && (stage === trackingStages.length - 1 || ended))
         const active = index === stage && !done
-        const Icon = stageIcons[index]
+        const Icon = stageIcons[index]!
+        const at = stageTime(view, index)
+        const expected = new Date(placed + item.expectedHours * 3600000)
         return (
           <li key={item.key} className="relative flex gap-4 pb-8 last:pb-0">
             {index < trackingStages.length - 1 && (
               <span className="absolute top-10 bottom-0 left-5 -ml-px w-0.5 bg-line">
-                <span
-                  className="block w-full bg-success transition-all duration-700"
-                  style={{ height: index < stage ? '100%' : '0%' }}
-                />
+                <span className="block w-full bg-success transition-all duration-700" style={{ height: index < stage ? '100%' : '0%' }} />
               </span>
             )}
             <span
@@ -41,9 +34,9 @@ export function TrackingTimeline({ record, stage }: { record: OrderRecord; stage
                 {item.label}
                 {active && <span className="ml-2 rounded-full bg-brand-soft px-2 py-0.5 align-middle text-[10px] font-extrabold text-brand">In progress</span>}
               </p>
-              <p className="mt-0.5 text-sm text-muted">{item.note}</p>
+              <p className="mt-0.5 text-sm text-muted">{view.events.find((event) => (item.statuses as readonly string[]).includes(event.status) && event.note)?.note ?? item.note}</p>
               <p className="mt-1 text-xs font-semibold text-muted">
-                {done || active ? stageTime(record, item.offsetH) : `Expected ${stageTime(record, item.offsetH)}`}
+                {at ? formatDateTime(at) : ended ? '' : `Expected ${formatDateTime(expected.getTime())}`}
               </p>
             </div>
           </li>
@@ -53,13 +46,15 @@ export function TrackingTimeline({ record, stage }: { record: OrderRecord; stage
   )
 }
 
-export function ProgressBar({ stage, cancelled = false }: { stage: number; cancelled?: boolean }) {
-  const pct = ((stage + (stage === trackingStages.length - 1 ? 0 : 0.5)) / trackingStages.length) * 100
+export function ProgressBar({ status, events }: Pick<TrackView, 'status' | 'events'>) {
+  const stage = stageOf({ status, events })
+  const ended = isEnded(status)
+  const pct = ((stage + (stage === trackingStages.length - 1 && !ended ? 1 : 0.5)) / trackingStages.length) * 100
   return (
     <div>
       <div className="h-2 overflow-hidden rounded-full bg-line">
         <div
-          className={`h-full rounded-full transition-all duration-700 ${cancelled ? 'bg-rose-500' : stage === 4 ? 'bg-success' : 'bg-gradient-to-r from-brand to-accent'}`}
+          className={`h-full rounded-full transition-all duration-700 ${ended ? 'bg-rose-500' : status === 'DELIVERED' ? 'bg-success' : 'bg-gradient-to-r from-brand to-accent'}`}
           style={{ width: `${Math.min(100, pct)}%` }}
         />
       </div>

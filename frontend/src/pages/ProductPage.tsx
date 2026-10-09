@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import { useState, type FormEvent } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Container } from '../components/layout/Container.tsx'
 import { ProductCard } from '../components/product/ProductCard.tsx'
 import { ProductMedia } from '../components/product/ProductMedia.tsx'
@@ -10,23 +11,42 @@ import { HeartIcon, LeafIcon, ShieldIcon, TruckIcon } from '../components/icons.
 import { Badge } from '../components/ui/Primitives.tsx'
 import { useWishlist } from '../context/WishlistContext.tsx'
 import { useCart } from '../context/CartContext.tsx'
-import { categoryById, getProduct, relatedProducts } from '../data/products.ts'
-import { reviews as seedReviews } from '../data/reviews.ts'
+import { useAuth } from '../context/AuthContext.tsx'
+import { api, errorMessage } from '../lib/api.ts'
+import { useProduct, useProductReviews } from '../lib/catalog.ts'
 import { discountPercent, formatPrice } from '../lib/money.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
-import type { PackSize, Product, Review } from '../types.ts'
+import type { Product } from '../types.ts'
 
 const tabs = ['Description', 'Nutrition Facts', 'Reviews'] as const
 
 export function ProductPage() {
   const { slug = '' } = useParams()
-  const product = getProduct(slug)
-  useDocumentTitle(product?.name ?? 'Product')
+  const query = useProduct(slug)
+  useDocumentTitle(query.data?.product.name ?? 'Product')
 
-  if (!product) {
+  if (query.isLoading) {
+    return (
+      <div className="bg-canvas">
+        <Container className="py-10">
+          <div className="card grid animate-pulse gap-8 p-4 md:p-7 lg:grid-cols-[minmax(0,480px)_1fr]" aria-busy="true">
+            <div className="aspect-square rounded-3xl bg-canvas" />
+            <div className="space-y-4">
+              <div className="h-6 w-1/3 rounded bg-canvas" />
+              <div className="h-10 w-2/3 rounded bg-canvas" />
+              <div className="h-24 rounded-2xl bg-canvas" />
+              <div className="h-12 w-1/2 rounded bg-canvas" />
+            </div>
+          </div>
+        </Container>
+      </div>
+    )
+  }
+
+  if (!query.data) {
     return (
       <Container className="py-20 text-center">
-        <h1 className="text-2xl font-bold">Product not found</h1>
+        <h1 className="text-2xl font-bold">{query.isError && !(query.error instanceof Error && /not found/i.test(query.error.message)) ? 'We could not load this product' : 'Product not found'}</h1>
         <Link to="/shop" className="mt-4 inline-block font-semibold text-brand">
           Back to shop
         </Link>
@@ -34,29 +54,38 @@ export function ProductPage() {
     )
   }
 
-  return <ProductDetails key={product.id} product={product} />
+  return <ProductDetails key={query.data.product.id} product={query.data.product} related={query.data.related} />
 }
 
-function ProductDetails({ product }: { product: Product }) {
+function ProductDetails({ product, related }: { product: Product; related: Product[] }) {
   const { addItem } = useCart()
   const wishlist = useWishlist()
   const navigate = useNavigate()
-  const [size, setSize] = useState<PackSize>(product.featuredSize)
+  const [params, setParams] = useSearchParams()
+  const requested = params.get('size')
+  const pack = product.packs.find((item) => item.size === requested) ?? product.packs.find((item) => item.size === product.featuredSize) ?? product.packs[0]!
   const [qty, setQty] = useState(1)
+  const chooseSize = (next: string) => {
+    setQty(1)
+    const nextParams = new URLSearchParams(params)
+    nextParams.set('size', next)
+    setParams(nextParams, { replace: true })
+  }
   const [tab, setTab] = useState<(typeof tabs)[number]>('Description')
-  const [extraReviews, setExtraReviews] = useState<Review[]>([])
-  const [reviewForm, setReviewForm] = useState({ name: '', rating: 5, comment: '' })
-  const pack = product.packs.find((item) => item.size === size) ?? product.packs[0]
-  const related = relatedProducts(product)
-  const productReviews = [
-    ...extraReviews,
-    ...seedReviews.filter((review) => review.productId === product.id),
-  ]
+  const { user } = useAuth()
+  const queryClient = useQueryClient()
+  const reviewsQuery = useProductReviews(product.slug)
+  const [reviewForm, setReviewForm] = useState({ rating: 5, comment: '' })
+  const [reviewMessage, setReviewMessage] = useState('')
+  const [reviewError, setReviewError] = useState('')
+  const [reviewBusy, setReviewBusy] = useState(false)
+  const productReviews = reviewsQuery.data ?? []
+  const packStock = pack.stock ?? 0
+  const packInStock = packStock > 0
 
   const off = discountPercent(pack.price, pack.mrp)
   const grams = pack.size === '1kg' ? 1000 : parseInt(pack.size, 10)
   const per100g = Math.round((pack.price / grams) * 100)
-  const category = categoryById(product.category)
 
   return (
     <div className="bg-canvas">
@@ -65,7 +94,7 @@ function ProductDetails({ product }: { product: Product }) {
           items={[
             { label: 'Home', to: '/' },
             { label: 'Shop', to: '/shop' },
-            { label: category?.name ?? 'Product', to: `/shop?category=${product.category}` },
+            { label: product.categoryName ?? 'Product', to: `/shop?category=${product.category}` },
             { label: product.name },
           ]}
         />
@@ -81,9 +110,9 @@ function ProductDetails({ product }: { product: Product }) {
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge>{category?.name}</Badge>
+              <Badge>{product.categoryName}</Badge>
               {product.bestseller && <Badge tone="accent">★ Bestseller</Badge>}
-              {product.inStock ? <Badge tone="success">In stock</Badge> : <Badge tone="dark">Sold out</Badge>}
+              {packInStock ? <Badge tone="success">In stock</Badge> : <Badge tone="dark">Sold out</Badge>}
             </div>
             <h1 className="mt-3 text-3xl font-extrabold tracking-tight sm:text-4xl">{product.name}</h1>
             <div className="mt-3 flex items-center gap-2 text-sm">
@@ -104,7 +133,7 @@ function ProductDetails({ product }: { product: Product }) {
                 <button
                   key={option.size}
                   type="button"
-                  onClick={() => setSize(option.size)}
+                  onClick={() => chooseSize(option.size)}
                   className={`min-w-24 rounded-2xl border-2 px-4 py-2.5 text-left transition duration-200 ${
                     option.size === pack.size ? 'border-brand bg-brand-soft shadow-[0_0_0_4px_rgb(18_58_134/0.08)]' : 'border-line bg-white hover:border-brand/40'
                   }`}
@@ -115,21 +144,22 @@ function ProductDetails({ product }: { product: Product }) {
               ))}
             </div>
             <div className="mt-5 flex flex-wrap items-center gap-3">
-              <QuantityInput value={qty} max={Math.max(product.stock, 1)} onChange={setQty} />
+              <QuantityInput value={qty} max={Math.max(packStock, 1)} onChange={setQty} />
               <button
                 type="button"
-                disabled={!product.inStock}
-                onClick={() => addItem(product.id, pack.size, qty)}
+                disabled={!packInStock}
+                onClick={() => addItem(pack.variantId, qty, product.name)}
                 className="btn btn-accent btn-lg"
               >
                 Add to Cart
               </button>
               <button
                 type="button"
-                disabled={!product.inStock}
+                disabled={!packInStock}
                 onClick={() => {
-                  addItem(product.id, pack.size, qty)
-                  navigate('/checkout')
+                  addItem(pack.variantId, qty, product.name)
+                  if (user) navigate('/checkout')
+                  else navigate('/login', { state: { from: '/checkout' } })
                 }}
                 className="btn btn-brand btn-lg"
               >
@@ -214,7 +244,7 @@ function ProductDetails({ product }: { product: Product }) {
                       <p className="font-semibold">
                         {review.name} <span className="font-normal text-muted">· {review.city}</span>
                       </p>
-                      <span className="text-xs text-muted">{review.date}</span>
+                      <span className="text-xs text-muted">{review.verified && <span className="mr-2 font-bold text-success">Verified buyer</span>}{new Date(review.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                     </div>
                     <div className="mt-2">
                       <Stars value={review.rating} className="size-3.5" />
@@ -225,55 +255,59 @@ function ProductDetails({ product }: { product: Product }) {
               </div>
               <form
                 className="h-fit rounded-xl bg-canvas p-4"
-                onSubmit={(event) => {
+                onSubmit={async (event: FormEvent) => {
                   event.preventDefault()
-                  setExtraReviews((current) => [
-                    {
-                      id: `local-${Date.now()}`,
-                      productId: product.id,
-                      name: reviewForm.name,
-                      city: 'India',
-                      rating: reviewForm.rating,
-                      comment: reviewForm.comment,
-                      date: 'Just now',
-                    },
-                    ...current,
-                  ])
-                  setReviewForm({ name: '', rating: 5, comment: '' })
+                  if (reviewForm.comment.trim().length < 5) return setReviewError('Tell us a little more (at least 5 characters)')
+                  setReviewBusy(true)
+                  setReviewError('')
+                  try {
+                    const result = await api<{ message: string }>(`/products/${product.slug}/reviews`, { body: { rating: reviewForm.rating, comment: reviewForm.comment.trim() } })
+                    setReviewMessage(result.message)
+                    setReviewForm({ rating: 5, comment: '' })
+                    void queryClient.invalidateQueries({ queryKey: ['reviews', product.slug] })
+                  } catch (error) {
+                    setReviewError(errorMessage(error))
+                  } finally {
+                    setReviewBusy(false)
+                  }
                 }}
               >
                 <p className="font-semibold">Write a review</p>
-                <input
-                  required
-                  value={reviewForm.name}
-                  onChange={(event) => setReviewForm({ ...reviewForm, name: event.target.value })}
-                  placeholder="Your name"
-                  className="field mt-3"
-                />
-                <label className="mt-3 block text-sm">
-                  Rating
-                  <select
-                    value={reviewForm.rating}
-                    onChange={(event) => setReviewForm({ ...reviewForm, rating: Number(event.target.value) })}
-                    className="mt-1 h-10 w-full rounded-lg border border-line bg-white px-3"
-                  >
-                    {[5, 4, 3, 2, 1].map((value) => (
-                      <option key={value} value={value}>
-                        {value} stars
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <textarea
-                  required
-                  value={reviewForm.comment}
-                  onChange={(event) => setReviewForm({ ...reviewForm, comment: event.target.value })}
-                  placeholder="How was it?"
-                  className="mt-3 h-24 w-full rounded-lg border border-line px-3 py-2 text-sm"
-                />
-                <button type="submit" className="btn btn-brand mt-3 w-full">
-                  Submit review
-                </button>
+                {!user ? (
+                  <p className="mt-3 text-sm text-muted">
+                    <Link to="/login" state={{ from: `/product/${product.slug}` }} className="font-bold text-brand">Log in</Link> to share your experience.
+                  </p>
+                ) : reviewMessage ? (
+                  <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-success">{reviewMessage}</p>
+                ) : (
+                  <>
+                    <label className="mt-3 block text-sm">
+                      Rating
+                      <select
+                        value={reviewForm.rating}
+                        onChange={(event) => setReviewForm({ ...reviewForm, rating: Number(event.target.value) })}
+                        className="field mt-1"
+                      >
+                        {[5, 4, 3, 2, 1].map((value) => (
+                          <option key={value} value={value}>
+                            {value} stars
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <textarea
+                      required
+                      value={reviewForm.comment}
+                      onChange={(event) => { setReviewForm({ ...reviewForm, comment: event.target.value }); setReviewError('') }}
+                      placeholder="How was it?"
+                      className="field mt-3 h-24"
+                    />
+                    {reviewError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-600">{reviewError}</p>}
+                    <button type="submit" disabled={reviewBusy} className="btn btn-brand mt-3 w-full">
+                      Submit review
+                    </button>
+                  </>
+                )}
               </form>
             </div>
           )}

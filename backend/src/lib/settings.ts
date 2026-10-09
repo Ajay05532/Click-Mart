@@ -1,10 +1,10 @@
-import { prisma } from './prisma.js'
+import { exec, from, rows } from './db.js'
 
 export const settingDefaults = {
   storeName: 'ClickMart',
-  supportEmail: 'tanusharmaa79@gmail.com',
-  supportPhone: '+91 93048 37512',
-  address: 'Ground Floor, Kashyap Sadan, Near Shemford School, Sampatchak, Jaganpura–Udaini Road, Patna, Bihar 804453',
+  supportEmail: 'hello@clickmart.com',
+  supportPhone: '+91 80 4567 8900',
+  address: '42, Residency Road, Bengaluru 560025',
   freeShippingThreshold: 499,
   shippingFee: 49,
   codEnabled: true,
@@ -15,17 +15,14 @@ export const settingDefaults = {
 export type Settings = typeof settingDefaults
 
 export async function getSettings(): Promise<Settings> {
-  const rows = await prisma.setting.findMany()
+  const data = await rows<{ key: string; value: unknown }>(from('Setting').select('key, value'))
   const out: Record<string, unknown> = { ...settingDefaults }
-  for (const row of rows) if (row.key in settingDefaults) out[row.key] = row.value
+  for (const row of data) if (row.key in settingDefaults) out[row.key] = row.value
   return out as Settings
 }
 
 export async function saveSettings(patch: Partial<Settings>) {
-  await prisma.$transaction(
-    Object.entries(patch).map(([key, value]) =>
-      prisma.setting.upsert({ where: { key }, update: { value: value as never }, create: { key, value: value as never } }),
-    ),
-  )
+  const entries = Object.entries(patch).map(([key, value]) => ({ key, value }))
+  if (entries.length) await exec(from('Setting').upsert(entries, { onConflict: 'key' }))
   return getSettings()
 }

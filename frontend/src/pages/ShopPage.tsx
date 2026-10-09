@@ -1,16 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Container } from '../components/layout/Container.tsx'
 import { ProductCard } from '../components/product/ProductCard.tsx'
 import { Breadcrumbs } from '../components/ui/Breadcrumbs.tsx'
 import { CloseIcon } from '../components/icons.tsx'
-import { categories, featuredPack, packSizes, products } from '../data/products.ts'
+import { packCards, useCategories, useProducts } from '../lib/catalog.ts'
 import { formatPrice } from '../lib/money.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
-import type { CategoryId, PackSize } from '../types.ts'
+import type { Category, CategoryId, PackSize } from '../types.ts'
 
 const PAGE_SIZE = 12
 const PRICE_CAP = 1500
+const packSizes: PackSize[] = ['100g', '250g', '500g', '1kg']
 
 export function ShopPage() {
   useDocumentTitle('Shop')
@@ -50,34 +51,22 @@ export function ShopPage() {
     })
   }
 
-  const filtered = useMemo(() => {
-    const list = products.filter((product) => {
-      const pack = featuredPack(product)
-      const haystack = `${product.name} ${product.blurb} ${product.category}`.toLowerCase()
-      if (query && !haystack.includes(query)) return false
-      if (selectedCategories.length && !selectedCategories.includes(product.category)) return false
-      if (selectedCategories.length === 1 && sub && product.subcategory !== sub) return false
-      if (pack.price > maxPrice) return false
-      if (sizes.length && !product.packs.some((packSize) => sizes.includes(packSize.size))) return false
-      if (availability.length === 1 && availability[0] === 'in' && !product.inStock) return false
-      if (availability.length === 1 && availability[0] === 'out' && product.inStock) return false
-      return true
-    })
-
-    return list.sort((a, b) => {
-      if (sort === 'price-asc') return featuredPack(a).price - featuredPack(b).price
-      if (sort === 'price-desc') return featuredPack(b).price - featuredPack(a).price
-      if (sort === 'discount') {
-        const off = (p: typeof a) => 1 - featuredPack(p).price / featuredPack(p).mrp
-        return off(b) - off(a)
-      }
-      if (sort === 'rating') return b.rating - a.rating
-      return b.sold - a.sold
-    })
-  }, [query, selectedCategories, sub, maxPrice, sizes, availability, sort])
-
-  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const visible = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const categories = useCategories().data ?? []
+  // The server filters, sorts and paginates; the page only describes what the shopper asked for.
+  const result = useProducts({
+    category: selectedCategories,
+    sub: selectedCategories.length === 1 ? sub : undefined,
+    q: params.get('q') ?? undefined,
+    maxPrice: maxPrice < PRICE_CAP ? maxPrice : undefined,
+    size: sizes,
+    availability: availability.length === 1 ? availability[0] : undefined,
+    sort,
+    page,
+    pageSize: PAGE_SIZE,
+  })
+  const visible = result.data?.items ?? []
+  const total = result.data?.total ?? 0
+  const pages = result.data?.pages ?? 1
   const chosen = categories.filter((category) => selectedCategories.includes(category.id))
   const activeCategory = chosen.length === 1 ? chosen[0] : undefined
   const activeSub = activeCategory?.subcategories.find((item) => item.id === sub)
@@ -156,6 +145,7 @@ export function ShopPage() {
 
   const filters = (
     <Filters
+      categories={categories}
       selectedCategories={selectedCategories}
       toggleCategory={toggleCategory}
       clearCategories={clearCategories}
@@ -192,8 +182,8 @@ export function ShopPage() {
       <Container className="py-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-muted">
-            Showing <span className="font-extrabold text-ink">{filtered.length}</span>{' '}
-            {filtered.length === 1 ? 'pouch' : 'pouches'}
+            Showing <span className="font-extrabold text-ink">{total}</span>{' '}
+            {total === 1 ? 'pouch' : 'pouches'}
           </p>
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 text-xs font-semibold text-muted">
@@ -251,7 +241,21 @@ export function ShopPage() {
               )}
             </div>
 
-            {visible.length === 0 ? (
+            {result.isLoading ? (
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-5 md:grid-cols-3 xl:grid-cols-4" aria-busy="true">
+                {Array.from({ length: 8 }, (_, index) => (
+                  <div key={index} className="aspect-[3/4] animate-pulse rounded-[1.25rem] bg-white ring-1 ring-line" />
+                ))}
+              </div>
+            ) : result.isError ? (
+              <div className="card mt-4 px-6 py-16 text-center">
+                <p className="text-lg font-semibold text-ink">We could not load the products</p>
+                <p className="mt-2 text-sm text-muted">Check your connection and try again.</p>
+                <button type="button" onClick={() => void result.refetch()} className="btn btn-brand mt-6">
+                  Try again
+                </button>
+              </div>
+            ) : visible.length === 0 ? (
               <div className="card mt-4 px-6 py-20 text-center">
                 <p className="text-lg font-semibold text-ink">Nothing matches these filters</p>
                 <p className="mt-2 text-sm text-muted">Try another category, or clear the price and pack size.</p>
@@ -265,9 +269,11 @@ export function ShopPage() {
               </div>
             ) : (
               <div className="stagger mt-4 grid grid-cols-2 gap-3 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
-                {visible.map((product) => (
-                  <ProductCard key={product.id} product={product} />
-                ))}
+                {packCards(visible)
+                  .filter(({ pack }) => sizes.length === 0 || sizes.includes(pack.size))
+                  .map(({ product, pack }) => (
+                    <ProductCard key={`${product.id}-${pack.size}`} product={product} pack={pack} />
+                  ))}
               </div>
             )}
 
@@ -334,7 +340,7 @@ export function ShopPage() {
                 onClick={() => setFiltersOpen(false)}
                 className="btn btn-brand w-full"
               >
-                Show {filtered.length} {filtered.length === 1 ? 'pouch' : 'pouches'}
+                Show {total} {total === 1 ? 'pouch' : 'pouches'}
               </button>
             </div>
           </div>
@@ -345,6 +351,7 @@ export function ShopPage() {
 }
 
 function Filters({
+  categories,
   selectedCategories,
   toggleCategory,
   clearCategories,
@@ -363,7 +370,8 @@ function Filters({
   selectedCategories: string[]
   toggleCategory: (id: CategoryId) => void
   clearCategories: () => void
-  activeCategory: (typeof categories)[number] | undefined
+  categories: Category[]
+  activeCategory: Category | undefined
   sub: string
   selectSub: (id: string) => void
   maxPrice: number
@@ -394,13 +402,13 @@ function Filters({
         <div className="mt-1">
           <FilterRow
             label="All"
-            count={products.length}
+            count={categories.reduce((sum, category) => sum + (category.productCount ?? 0), 0)}
             active={selectedCategories.length === 0}
             onClick={clearCategories}
           />
           {categories.map((category) => {
             const active = selectedCategories.includes(category.id)
-            const count = products.filter((product) => product.category === category.id).length
+            const count = category.productCount ?? 0
             return (
               <div key={category.id}>
                 <FilterRow
@@ -415,7 +423,7 @@ function Filters({
                       <FilterRow
                         key={item.id}
                         label={item.name}
-                        count={products.filter((product) => product.subcategory === item.id).length}
+                        count={item.productCount ?? 0}
                         active={activeCategory?.id === category.id && sub === item.id}
                         onClick={() => selectSub(item.id)}
                       />

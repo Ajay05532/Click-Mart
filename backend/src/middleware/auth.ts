@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express'
-import type { Role } from '@prisma/client'
+import type { Role } from '../lib/types.js'
 import { readAccessToken, type AuthUser } from '../lib/auth.js'
 import { forbidden, unauthorized } from '../lib/errors.js'
 

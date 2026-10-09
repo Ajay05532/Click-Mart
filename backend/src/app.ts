@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit'
 import helmet from 'helmet'
 import { env, isProd } from './lib/env.js'
 import { optionalAuth } from './middleware/auth.js'
+import { requireHttps } from './middleware/https.js'
 import { errorHandler, notFoundHandler } from './middleware/errors.js'
 import { adminRouter, UPLOAD_DIR } from './routes/admin/index.js'
 import { authRouter } from './routes/auth.js'
@@ -16,7 +17,14 @@ import { ordersRouter, paymentsRouter, paymentWebhook } from './routes/orders.js
 export function createApp() {
   const app = express()
   app.set('trust proxy', 1)
-  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }))
+  if (isProd) app.use(requireHttps)
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      // Tell browsers to use HTTPS only for the next two years.
+      strictTransportSecurity: { maxAge: 63072000, includeSubDomains: true },
+    }),
+  )
   app.use(cors({ origin: env.CORS_ORIGINS.split(',').map((origin) => origin.trim()), credentials: true }))
   app.use(cookieParser())
 
@@ -28,9 +36,15 @@ export function createApp() {
   app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: isProd ? '7d' : 0 }))
 
   const api = express.Router()
-  const strict = (max: number) =>
-    rateLimit({ windowMs: 15 * 60 * 1000, limit: env.NODE_ENV === 'test' ? 10_000 : max, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many attempts. Please try again later.' } })
-  api.use('/auth', strict(30), authRouter)
+  const limit = (max: number, extra: Partial<Parameters<typeof rateLimit>[0]> = {}) =>
+    rateLimit({ windowMs: 15 * 60 * 1000, limit: env.NODE_ENV === 'test' ? 10_000 : max, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many attempts. Please try again later.' }, ...extra })
+  const strict = (max: number) => limit(max)
+  // Brute-force protection counts FAILED log-ins/registrations only, so normal use never trips it.
+  const authFailures = limit(20, { skipSuccessfulRequests: true, skip: (req) => req.path === '/refresh' || req.path === '/logout' || req.path === '/forgot-password' })
+  // Every page load restores the session with one refresh call, so it gets its own, much higher, allowance.
+  api.use('/auth/refresh', limit(300))
+  api.use('/auth/forgot-password', strict(8))
+  api.use('/auth', authFailures, authRouter)
   api.use('/checkout', strict(60))
   api.use(optionalAuth)
   api.use('/me', meRouter)

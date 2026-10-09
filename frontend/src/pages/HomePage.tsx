@@ -6,15 +6,15 @@ import { ProductCard } from '../components/product/ProductCard.tsx'
 import { ProductMedia } from '../components/product/ProductMedia.tsx'
 import { SectionHeading } from '../components/ui/Primitives.tsx'
 import { Stars } from '../components/ui/Stars.tsx'
-import { categories, featuredPack, products } from '../data/products.ts'
+import { featuredPack, packCards, productPath, useActiveCoupons, useBanners, useCategories, useProducts, useStoreSettings } from '../lib/catalog.ts'
 import { testimonials } from '../data/reviews.ts'
-import { FREE_SHIPPING_AT, formatPrice } from '../lib/money.ts'
+import { formatPrice } from '../lib/money.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
-const promises = [
+const promisesFor = (freeAt: number) => [
   { icon: LeafIcon, title: '100% Natural', text: 'No preservatives or added sugar' },
   { icon: BoxIcon, title: 'Packed to order', text: 'Sealed fresh after you order' },
-  { icon: TruckIcon, title: 'Free delivery', text: `On orders above ${formatPrice(FREE_SHIPPING_AT)}` },
+  { icon: TruckIcon, title: 'Free delivery', text: `On orders above ${formatPrice(freeAt)}` },
   { icon: ShieldIcon, title: 'Secure checkout', text: 'UPI, cards, netbanking & COD' },
 ]
 
@@ -28,14 +28,22 @@ const steps = [
 export function HomePage() {
   useDocumentTitle('ClickMart')
   const [copied, setCopied] = useState(false)
-  const bestsellers = products.filter((product) => product.bestseller).slice(0, 4)
-  const spotlight = products.find((product) => product.id === 'almonds') ?? products[0]
-  const spotlightPack = featuredPack(spotlight)
-  const alsoLoved = products.filter((product) => !product.bestseller && product.inStock).slice(0, 4)
+  const settings = useStoreSettings()
+  const promises = promisesFor(settings.freeShippingThreshold)
+  const categories = useCategories().data ?? []
+  const best = useProducts({ bestseller: true, pageSize: 8 })
+  const popular = useProducts({ sort: 'popular', pageSize: 12 })
+  const catalogSize = useProducts({ pageSize: 1 }).data?.total
+  const promo = useBanners('PROMO').data?.[0]
+  const topCoupon = (useActiveCoupons().data ?? []).find((coupon) => coupon.type === 'PERCENT')
+  const bestsellers = (best.data?.items ?? []).slice(0, 4)
+  const spotlight = bestsellers[0] ?? popular.data?.items[0]
+  const spotlightPack = spotlight ? featuredPack(spotlight) : undefined
+  const alsoLoved = (popular.data?.items ?? []).filter((product) => !product.bestseller && product.inStock).slice(0, 4)
 
   const copyCode = async () => {
     try {
-      await navigator.clipboard.writeText('DRY15')
+      await navigator.clipboard.writeText(topCoupon?.code ?? 'DRY15')
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1800)
     } catch {
@@ -62,7 +70,7 @@ export function HomePage() {
             <dl className="mt-10 flex flex-nowrap items-center">
               {[
                 ['50+', 'Premium Varieties'],
-                [`${(products.length * 150).toLocaleString('en-IN')}+`, 'Pouches Delivered'],
+                [`${((catalogSize ?? 12) * 150).toLocaleString('en-IN')}+`, 'Pouches Delivered'],
                 ['12,000+', 'Happy Customers'],
               ].map(([value, label], index) => (
                 <div key={label} className={`pr-4 sm:pr-8 ${index > 0 ? 'border-l border-ink/15 pl-4 sm:pl-8' : ''}`}>
@@ -86,21 +94,23 @@ export function HomePage() {
             <svg viewBox="0 0 24 24" className="motion-float absolute bottom-16 left-6 size-9 text-ink drop-shadow-lg sm:size-12 lg:left-20" style={{ animationDelay: '-2s' }} aria-hidden="true">
               <path fill="currentColor" d="M12 0c.6 6.7 4.9 11.4 12 12-7.1.6-11.4 5.3-12 12-.6-6.7-4.9-11.4-12-12C7.1 11.4 11.4 6.7 12 0Z" />
             </svg>
-            <Link
-              to={`/product/${spotlight.slug}`}
-              className="absolute right-4 bottom-4 flex items-center gap-3 rounded-2xl bg-white/95 p-3 pr-5 shadow-pop backdrop-blur transition hover:scale-[1.03] sm:right-6 sm:bottom-6"
-            >
-              <span className="size-12 overflow-hidden rounded-xl bg-canvas">
-                <ProductMedia name={spotlight.name} image={spotlight.image} art={spotlight.art} className="size-full" />
-              </span>
-              <span>
-                <span className="eyebrow block">Best seller</span>
-                <span className="block text-sm font-extrabold">{spotlight.name}</span>
-                <span className="text-sm text-muted">
-                  {spotlightPack.size} · <span className="font-bold text-ink">{formatPrice(spotlightPack.price)}</span>
+            {spotlight && spotlightPack && (
+              <Link
+                to={productPath(spotlight, spotlightPack.size)}
+                className="absolute right-4 bottom-4 flex items-center gap-3 rounded-2xl bg-white/95 p-3 pr-5 shadow-pop backdrop-blur transition hover:scale-[1.03] sm:right-6 sm:bottom-6"
+              >
+                <span className="size-12 overflow-hidden rounded-xl bg-canvas">
+                  <ProductMedia name={spotlight.name} image={spotlight.image} art={spotlight.art} className="size-full" />
                 </span>
-              </span>
-            </Link>
+                <span>
+                  <span className="eyebrow block">Best seller</span>
+                  <span className="block text-sm font-extrabold">{spotlight.name}</span>
+                  <span className="text-sm text-muted">
+                    {spotlightPack.size} · <span className="font-bold text-ink">{formatPrice(spotlightPack.price)}</span>
+                  </span>
+                </span>
+              </Link>
+            )}
           </div>
         </Container>
       </section>
@@ -165,8 +175,8 @@ export function HomePage() {
         <Container>
           <SectionHeading eyebrow="Most reordered" title="Customer favourites" action={{ to: '/shop', label: 'Shop all' }} />
           <div className="stagger mt-8 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">
-            {bestsellers.map((product) => (
-              <ProductCard key={product.id} product={product} />
+            {packCards(bestsellers).map(({ product, pack }) => (
+              <ProductCard key={`${product.id}-${pack.size}`} product={product} pack={pack} />
             ))}
           </div>
         </Container>
@@ -180,10 +190,10 @@ export function HomePage() {
             <div className="relative p-8 sm:p-12">
               <p className="eyebrow !text-orange-300">This week only</p>
               <h2 className="mt-3 max-w-md text-3xl leading-tight font-extrabold tracking-tight sm:text-4xl">
-                15% off every pouch
+                {promo?.title ?? (topCoupon ? `${topCoupon.value}% off every pouch` : 'Fresh offers every week')}
               </h2>
               <p className="mt-4 max-w-md leading-7 text-white/75">
-                Healthy snacking, made simple. Use the code at checkout and it comes off your whole basket.
+                {promo?.subtitle || 'Healthy snacking, made simple. Use the code at checkout and it comes off your whole basket.'}
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <button
@@ -191,18 +201,18 @@ export function HomePage() {
                   onClick={() => void copyCode()}
                   className="inline-flex items-center gap-3 rounded-full border-2 border-dashed border-white/50 bg-white/10 py-3 pr-5 pl-6 text-sm font-extrabold tracking-[0.2em] backdrop-blur transition hover:bg-white/20"
                 >
-                  DRY15
+                  {topCoupon?.code ?? 'DRY15'}
                   <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-extrabold tracking-normal text-brand">
                     {copied ? 'Copied ✓' : 'Copy'}
                   </span>
                 </button>
-                <Link to="/shop" className="btn btn-accent btn-lg">
+                <Link to={promo?.link ?? '/sale'} className="btn btn-accent btn-lg">
                   Shop the offer
                 </Link>
               </div>
             </div>
             <div className="relative min-h-52">
-              <img src="/images/walnuts.jpg" alt="" className="absolute inset-0 size-full object-cover" />
+              <img src={promo?.image ?? '/images/walnuts.jpg'} alt="" className="absolute inset-0 size-full object-cover" />
               <div className="absolute inset-0 bg-gradient-to-r from-brand-dark/80 via-transparent to-transparent" />
             </div>
           </div>
@@ -214,8 +224,8 @@ export function HomePage() {
         <Container>
           <SectionHeading eyebrow="Worth a look" title="Also in the pantry" />
           <div className="stagger mt-8 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">
-            {alsoLoved.map((product) => (
-              <ProductCard key={product.id} product={product} />
+            {packCards(alsoLoved).map(({ product, pack }) => (
+              <ProductCard key={`${product.id}-${pack.size}`} product={product} pack={pack} />
             ))}
           </div>
         </Container>

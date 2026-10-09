@@ -5,41 +5,60 @@ import { Container } from '../components/layout/Container.tsx'
 import { ProgressBar } from '../components/order/TrackingTimeline.tsx'
 import { ProductMedia } from '../components/product/ProductMedia.tsx'
 import { EmptyState } from '../components/ui/Primitives.tsx'
+import { useAuth } from '../context/AuthContext.tsx'
 import { formatPrice } from '../lib/money.ts'
-import { estimatedDelivery, trackOrder } from '../lib/orders.ts'
+import { formatDay, openInvoice, paymentLabel, useOrder, type ApiOrder } from '../lib/orders.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function OrderPage() {
   const { id = '' } = useParams()
   const location = useLocation()
-  const fresh = (location.state as { fresh?: boolean } | null)?.fresh === true
-  const tracked = trackOrder(id)
+  const { user, loading } = useAuth()
+  const state = location.state as { order?: ApiOrder } | null
+  // Straight after checkout the order comes with the navigation (works for guests too).
+  const justPlaced = state?.order && state.order.code.toLowerCase() === id.toLowerCase() ? state.order : undefined
+  const fetched = useOrder(id, !justPlaced)
+  const order = justPlaced ?? fetched.data
   const [copied, setCopied] = useState(false)
-  useDocumentTitle(tracked ? `Order ${tracked.record.id}` : 'Order not found')
+  useDocumentTitle(order ? `Order ${order.code}` : 'Your order')
 
-  if (!tracked) {
+  if (!order) {
+    if (loading || fetched.isLoading) {
+      return (
+        <div className="grid min-h-[50vh] place-items-center">
+          <span className="motion-spin block size-10 rounded-full border-4 border-brand-soft border-t-brand" role="status" aria-label="Loading your order" />
+        </div>
+      )
+    }
     return (
       <Container className="py-16">
         <EmptyState
           icon={<ReceiptIcon className="size-9" />}
-          title="We could not find that order"
-          text="Check the order ID in your confirmation, or look through your recent orders."
-          action={{ to: '/orders', label: 'My orders' }}
+          title={user ? 'We could not find that order' : 'Log in to see this order'}
+          text={user ? 'Check the order ID in your confirmation, or look through your recent orders.' : 'Orders are private. Log in, or track it with your order ID and the phone number you used.'}
+          action={user ? { to: '/orders', label: 'My orders' } : { to: '/login', label: 'Log in' }}
         />
+        {!user && (
+          <p className="mt-4 text-center text-sm">
+            <Link to={`/track/${id}`} className="font-bold text-brand">Track with order ID and phone</Link>
+          </p>
+        )}
       </Container>
     )
   }
 
-  const { record, stage } = tracked
+  const fresh = !!justPlaced
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(record.id)
+      await navigator.clipboard.writeText(order.code)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1600)
     } catch {
       setCopied(false)
     }
   }
+  const invoice = () => (user ? openInvoice(order.code).catch(() => window.print()) : window.print())
+  const paid = order.paymentStatus === 'PAID'
 
   return (
     <div className="bg-canvas">
@@ -52,11 +71,9 @@ export function OrderPage() {
                 <path className="motion-draw" d="m5 12.5 4.5 4.5L19 7.5" />
               </svg>
             </span>
-            <h1 className="relative mt-6 text-3xl font-extrabold tracking-tight">
-              {fresh ? 'Thank you, your order is confirmed!' : `Order ${record.id}`}
-            </h1>
+            <h1 className="relative mt-6 text-3xl font-extrabold tracking-tight">{fresh ? 'Thank you, your order is confirmed!' : `Order ${order.code}`}</h1>
             <p className="relative mx-auto mt-3 max-w-md text-sm leading-6 text-muted">
-              {record.email ? `A confirmation has been sent to ${record.email}. ` : ''}
+              {order.customer.email ? `A confirmation has been sent to ${order.customer.email}. ` : ''}
               We will pack your pouches fresh and keep you posted at every step.
             </p>
             <button
@@ -64,49 +81,53 @@ export function OrderPage() {
               onClick={() => void copy()}
               className="relative mt-5 inline-flex items-center gap-2 rounded-full border border-dashed border-line bg-canvas px-4 py-2 text-sm font-bold transition hover:border-brand"
             >
-              Order ID <span className="font-extrabold text-brand">{record.id}</span>
+              Order ID <span className="font-extrabold text-brand">{order.code}</span>
               <CopyIcon className="size-4 text-muted" />
               {copied && <span className="text-xs text-success">Copied</span>}
             </button>
             <div className="relative mx-auto mt-8 max-w-xl text-left">
-              <ProgressBar stage={stage} cancelled={tracked.cancelled} />
+              <ProgressBar status={order.status} events={order.events} />
             </div>
             <div className="relative mt-8 flex flex-wrap justify-center gap-3">
-              <Link to={`/track/${record.id}`} className="btn btn-brand btn-lg">
+              <Link to={`/track/${order.code}`} state={{ order }} className="btn btn-brand btn-lg">
                 Track order
               </Link>
               <Link to="/shop" className="btn btn-outline btn-lg">
                 Continue shopping
               </Link>
             </div>
+            {!user && fresh && (
+              <p className="relative mt-5 text-sm text-muted">
+                Save this order ID. <Link to="/login?mode=register" className="font-bold text-brand">Create an account</Link> to see all your orders in one place.
+              </p>
+            )}
           </div>
 
           <div className="mt-6 grid gap-6 md:grid-cols-[1.3fr_1fr]">
             <section className="card p-5 sm:p-6">
-              <h2 className="text-lg font-extrabold">Items ({record.lines.reduce((sum, line) => sum + line.quantity, 0)})</h2>
+              <h2 className="text-lg font-extrabold">Items ({order.items.reduce((sum, line) => sum + line.quantity, 0)})</h2>
               <ul className="mt-4 divide-y divide-line">
-                {record.lines.map((line) => (
+                {order.items.map((line) => (
                   <li key={`${line.name}-${line.size}`} className="flex items-center gap-4 py-3.5 first:pt-0 last:pb-0">
                     <span className="size-16 shrink-0 overflow-hidden rounded-xl bg-canvas ring-1 ring-line">
-                      <ProductMedia name={line.name} image={line.image} art={line.art} className="size-full" />
+                      <ProductMedia name={line.name} image={line.image} art={line.art ?? 'mix'} className="size-full" />
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-extrabold">{line.name}</span>
-                      <span className="text-xs text-muted">
-                        {line.size} · Qty {line.quantity}
-                      </span>
+                      <span className="text-xs text-muted">{line.size} · Qty {line.quantity}</span>
                     </span>
                     <span className="text-sm font-extrabold">{formatPrice(line.unitPrice * line.quantity)}</span>
                   </li>
                 ))}
               </ul>
               <dl className="mt-5 space-y-2.5 border-t border-dashed border-line pt-5 text-sm">
-                <Row label="Subtotal" value={formatPrice(record.subtotal)} />
-                {record.discount > 0 && <Row label={`Discount (${record.coupon})`} value={`−${formatPrice(record.discount)}`} tone="success" />}
-                <Row label="Delivery" value={record.shipping === 0 ? 'FREE' : formatPrice(record.shipping)} tone={record.shipping === 0 ? 'success' : undefined} />
+                <Row label="Subtotal" value={formatPrice(order.subtotal)} />
+                {order.offerDiscount > 0 && <Row label="Offers" value={`−${formatPrice(order.offerDiscount)}`} tone="success" />}
+                {order.discount > 0 && <Row label={`Discount (${order.couponCode})`} value={`−${formatPrice(order.discount)}`} tone="success" />}
+                <Row label="Delivery" value={order.shipping === 0 ? 'FREE' : formatPrice(order.shipping)} tone={order.shipping === 0 ? 'success' : undefined} />
                 <div className="flex justify-between border-t border-line pt-3 text-base font-extrabold">
-                  <dt>{record.payment.paid ? 'Total paid' : 'Total to pay'}</dt>
-                  <dd>{formatPrice(record.total)}</dd>
+                  <dt>{paid ? 'Total paid' : 'Total to pay'}</dt>
+                  <dd>{formatPrice(order.total)}</dd>
                 </div>
               </dl>
             </section>
@@ -114,24 +135,23 @@ export function OrderPage() {
             <div className="space-y-6">
               <section className="card p-5 sm:p-6">
                 <h2 className="text-lg font-extrabold">Delivery</h2>
-                <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-bold text-success">Arriving by {estimatedDelivery(record)}</p>
-                <p className="mt-4 text-sm font-extrabold">{record.customer}</p>
+                {order.status !== 'CANCELLED' && order.status !== 'DELIVERED' && order.status !== 'RETURNED' && (
+                  <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-bold text-success">Arriving by {formatDay(order.estimatedDelivery)}</p>
+                )}
+                <p className="mt-4 text-sm font-extrabold">{order.customer.name}</p>
                 <p className="mt-1 text-sm leading-6 text-muted">
-                  {record.address}
-                  {record.city && `, ${record.city}`}
-                  {record.state && `, ${record.state}`} {record.pin}
+                  {order.address.line}, {order.address.city}, {order.address.state} {order.address.pin}
                 </p>
-                {record.phone && <p className="mt-1 text-sm text-muted">+91 {record.phone}</p>}
+                {order.customer.phone && <p className="mt-1 text-sm text-muted">+91 {order.customer.phone}</p>}
               </section>
               <section className="card p-5 sm:p-6">
                 <h2 className="text-lg font-extrabold">Payment</h2>
-                <p className="mt-3 text-sm font-bold">{record.payment.method}</p>
-                {record.payment.detail && <p className="text-sm text-muted">{record.payment.detail}</p>}
-                <p className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-extrabold ${record.payment.paid ? 'bg-emerald-50 text-success' : 'bg-orange-50 text-accent-dark'}`}>
-                  {record.payment.paid ? `Paid · ${record.payment.ref}` : 'Pay on delivery'}
+                <p className="mt-3 text-sm font-bold">{order.payment?.detail || paymentLabel[order.paymentMethod]}</p>
+                <p className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-extrabold ${paid ? 'bg-emerald-50 text-success' : 'bg-orange-50 text-accent-dark'}`}>
+                  {paid ? 'Paid' : order.paymentMethod === 'COD' ? 'Pay on delivery' : order.paymentStatus === 'REFUNDED' ? 'Refunded' : order.paymentStatus === 'FAILED' ? 'Payment failed' : 'Payment pending'}
                 </p>
               </section>
-              <button type="button" onClick={() => window.print()} className="btn btn-outline w-full print:hidden">
+              <button type="button" onClick={() => void invoice()} className="btn btn-outline w-full print:hidden">
                 <ReceiptIcon className="size-4" /> Download invoice
               </button>
             </div>

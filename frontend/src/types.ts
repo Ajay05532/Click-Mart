@@ -1,13 +1,7 @@
-export type CategoryId =
-  | 'almonds'
-  | 'cashews'
-  | 'raisins'
-  | 'walnuts'
-  | 'pistachios'
-  | 'seeds'
-  | 'mixed'
+// Categories and pack sizes are managed in the admin, so they are open-ended strings.
+export type CategoryId = string
 
-export type PackSize = '100g' | '250g' | '500g' | '1kg'
+export type PackSize = string
 
 export type ArtTone =
   | 'amber'
@@ -23,14 +17,20 @@ export type ArtTone =
   | 'mix'
 
 export type Pack = {
+  /** The purchasable unit: carts and orders refer to this id. */
+  variantId: string
   size: PackSize
   price: number
   mrp: number
+  stock?: number
+  /** Active offer applied to this price, if any. */
+  offer?: { name: string; badge: string | null } | null
 }
 
 export type Subcategory = {
   id: string
   name: string
+  productCount?: number
 }
 
 export type Product = {
@@ -38,10 +38,12 @@ export type Product = {
   slug: string
   name: string
   category: CategoryId
-  subcategory: string
+  categoryName?: string
+  subcategory: string | null
   rating: number
   reviewCount: number
   image: string | null
+  images?: string[]
   art: ArtTone
   blurb: string
   description: string
@@ -61,6 +63,7 @@ export type Category = {
   image: string | null
   art: ArtTone
   tagline: string
+  productCount?: number
   subcategories: Subcategory[]
 }
 

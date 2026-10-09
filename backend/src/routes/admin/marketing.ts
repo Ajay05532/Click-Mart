@@ -2,7 +2,8 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { audit } from '../../lib/audit.js'
 import { notFound } from '../../lib/errors.js'
-import { prisma } from '../../lib/prisma.js'
+import { from, count, db, exec, maybe, one, rows, rpc  } from '../../lib/db.js'
+import type { Coupon, Offer } from '../../lib/types.js'
 import { actor, adminOnly } from '../../middleware/auth.js'
 
 export const adminMarketingRouter = Router()
@@ -28,24 +29,26 @@ const offerSchema = z
   })
 
 adminMarketingRouter.get('/offers', async (_req, res) => {
-  res.json({ items: await prisma.offer.findMany({ orderBy: { createdAt: 'desc' } }) })
+  res.json({ items: await rows(from('Offer').select('*').order('createdAt', { ascending: false })) })
 })
 adminMarketingRouter.post('/offers', async (req, res) => {
   const { badge, ...data } = offerSchema.parse(req.body)
-  const offer = await prisma.offer.create({ data: { ...data, badge: badge ?? null } })
+  const offer = await one<Offer>(from('Offer').insert({ ...data, badge: badge ?? null }).select().single())
+  await rpc('set_offer_targets', { p_offer_id: offer.id, p_product_ids: data.productIds, p_category_ids: data.categoryIds })
   await audit(actor(req).id, 'offer.create', 'Offer', offer.id, data)
   res.status(201).json({ offer })
 })
 adminMarketingRouter.patch('/offers/:id', async (req, res) => {
-  const existing = await prisma.offer.findUnique({ where: { id: String(req.params.id) } })
+  const existing = await maybe<Offer>(from('Offer').select('*').eq('id', String(req.params.id)).maybeSingle())
   if (!existing) throw notFound('Offer')
   const data = offerSchema.parse({ ...existing, ...req.body })
-  const offer = await prisma.offer.update({ where: { id: existing.id }, data: { ...data, badge: data.badge ?? null } })
+  const offer = await one<Offer>(from('Offer').update({ ...data, badge: data.badge ?? null }).eq('id', existing.id).select().single())
+  await rpc('set_offer_targets', { p_offer_id: offer.id, p_product_ids: data.productIds, p_category_ids: data.categoryIds })
   await audit(actor(req).id, 'offer.update', 'Offer', offer.id, req.body)
   res.json({ offer })
 })
 adminMarketingRouter.delete('/offers/:id', async (req, res) => {
-  await prisma.offer.delete({ where: { id: String(req.params.id) } })
+  await exec(from('Offer').delete().eq('id', String(req.params.id)))
   await audit(actor(req).id, 'offer.delete', 'Offer', String(req.params.id))
   res.json({ deleted: true })
 })
@@ -74,29 +77,31 @@ const couponSchema = z
   })
 
 adminMarketingRouter.get('/coupons', adminOnly, async (_req, res) => {
-  res.json({ items: await prisma.coupon.findMany({ orderBy: { createdAt: 'desc' } }) })
+  res.json({ items: await rows(from('Coupon').select('*').order('createdAt', { ascending: false })) })
 })
 adminMarketingRouter.post('/coupons', adminOnly, async (req, res) => {
   const data = couponSchema.parse(req.body)
-  const coupon = await prisma.coupon.create({ data: { ...data, maxDiscount: data.maxDiscount ?? null, usageLimit: data.usageLimit ?? null, perUserLimit: data.perUserLimit ?? null } })
+  const coupon = await one<Coupon>(from('Coupon').insert({ ...data, maxDiscount: data.maxDiscount ?? null, usageLimit: data.usageLimit ?? null, perUserLimit: data.perUserLimit ?? null }).select().single())
+  await rpc('set_coupon_targets', { p_coupon_id: coupon.id, p_product_ids: data.productIds, p_category_ids: data.categoryIds })
   await audit(actor(req).id, 'coupon.create', 'Coupon', coupon.id, { code: coupon.code })
   res.status(201).json({ coupon })
 })
 adminMarketingRouter.patch('/coupons/:id', adminOnly, async (req, res) => {
-  const existing = await prisma.coupon.findUnique({ where: { id: String(req.params.id) } })
+  const existing = await maybe<Coupon>(from('Coupon').select('*').eq('id', String(req.params.id)).maybeSingle())
   if (!existing) throw notFound('Coupon')
   const data = couponSchema.parse({ ...existing, ...req.body })
-  const coupon = await prisma.coupon.update({ where: { id: existing.id }, data: { ...data, maxDiscount: data.maxDiscount ?? null, usageLimit: data.usageLimit ?? null, perUserLimit: data.perUserLimit ?? null } })
+  const coupon = await one<Coupon>(from('Coupon').update({ ...data, maxDiscount: data.maxDiscount ?? null, usageLimit: data.usageLimit ?? null, perUserLimit: data.perUserLimit ?? null }).eq('id', existing.id).select().single())
+  await rpc('set_coupon_targets', { p_coupon_id: coupon.id, p_product_ids: data.productIds, p_category_ids: data.categoryIds })
   await audit(actor(req).id, 'coupon.update', 'Coupon', coupon.id, req.body)
   res.json({ coupon })
 })
 adminMarketingRouter.delete('/coupons/:id', adminOnly, async (req, res) => {
-  const used = await prisma.couponRedemption.count({ where: { couponId: String(req.params.id) } })
+  const used = await count(from('CouponRedemption').select('id', { count: 'exact', head: true }).eq('couponId', String(req.params.id)))
   if (used > 0) {
-    await prisma.coupon.update({ where: { id: String(req.params.id) }, data: { isActive: false } })
+    await exec(from('Coupon').update({ isActive: false }).eq('id', String(req.params.id)))
     return res.json({ archived: true, message: 'This coupon was used on orders, so it was deactivated instead of deleted.' })
   }
-  await prisma.coupon.delete({ where: { id: String(req.params.id) } })
+  await exec(from('Coupon').delete().eq('id', String(req.params.id)))
   res.json({ deleted: true })
 })
 
@@ -113,53 +118,41 @@ const bannerSchema = z.object({
 })
 
 adminMarketingRouter.get('/banners', async (_req, res) => {
-  res.json({ items: await prisma.banner.findMany({ orderBy: [{ placement: 'asc' }, { sortOrder: 'asc' }] }) })
+  res.json({ items: await rows(from('Banner').select('*').order('placement').order('sortOrder')) })
 })
 adminMarketingRouter.post('/banners', async (req, res) => {
   const data = bannerSchema.parse(req.body)
-  const banner = await prisma.banner.create({ data: { ...data, image: data.image ?? null } })
+  const banner = await one<{ id: string }>(from('Banner').insert({ ...data, image: data.image ?? null }).select().single())
   await audit(actor(req).id, 'banner.create', 'Banner', banner.id)
   res.status(201).json({ banner })
 })
 adminMarketingRouter.patch('/banners/:id', async (req, res) => {
   const data = bannerSchema.partial().parse(req.body)
-  const banner = await prisma.banner.update({ where: { id: String(req.params.id) }, data: { ...data, image: data.image ?? undefined } })
+  const banner = await one<{ id: string }>(from('Banner').update({ ...data, ...(data.image === undefined ? {} : { image: data.image }) }).eq('id', String(req.params.id)).select().single())
   await audit(actor(req).id, 'banner.update', 'Banner', banner.id, data)
   res.json({ banner })
 })
 adminMarketingRouter.delete('/banners/:id', async (req, res) => {
-  await prisma.banner.delete({ where: { id: String(req.params.id) } })
+  await exec(from('Banner').delete().eq('id', String(req.params.id)))
   res.json({ deleted: true })
 })
 
 // ---- Reviews moderation ----
-async function recomputeRating(productId: string) {
-  const agg = await prisma.review.aggregate({ where: { productId, status: 'APPROVED' }, _avg: { rating: true }, _count: true })
-  await prisma.product.update({
-    where: { id: productId },
-    data: { ratingAvg: Math.round((agg._avg.rating ?? 0) * 10) / 10, ratingCount: agg._count },
-  })
-}
-
 adminMarketingRouter.get('/reviews', async (req, res) => {
   const status = z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional().parse(req.query.status)
-  const items = await prisma.review.findMany({
-    where: { status },
-    include: { product: { select: { name: true, slug: true } } },
-    orderBy: { createdAt: 'desc' },
-    take: 200,
-  })
-  res.json({ items })
+  let request = from('Review').select('*, product:Product(name, slug)').order('createdAt', { ascending: false }).limit(200)
+  if (status) request = request.eq('status', status)
+  res.json({ items: await rows(request) })
 })
 adminMarketingRouter.patch('/reviews/:id', async (req, res) => {
   const data = z.object({ status: z.enum(['APPROVED', 'REJECTED', 'PENDING']) }).parse(req.body)
-  const review = await prisma.review.update({ where: { id: String(req.params.id) }, data })
-  await recomputeRating(review.productId)
+  const review = await one<{ id: string; productId: string }>(from('Review').update(data).eq('id', String(req.params.id)).select().single())
+  await rpc('recompute_rating', { p_product_id: review.productId })
   await audit(actor(req).id, `review.${data.status.toLowerCase()}`, 'Review', review.id)
   res.json({ review })
 })
 adminMarketingRouter.delete('/reviews/:id', async (req, res) => {
-  const review = await prisma.review.delete({ where: { id: String(req.params.id) } })
-  await recomputeRating(review.productId)
+  const review = await one<{ id: string; productId: string }>(from('Review').delete().eq('id', String(req.params.id)).select().single())
+  await rpc('recompute_rating', { p_product_id: review.productId })
   res.json({ deleted: true })
 })

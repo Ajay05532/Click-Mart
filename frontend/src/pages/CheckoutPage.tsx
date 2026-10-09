@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { OrderSummary } from '../components/cart/OrderSummary.tsx'
 import { BankIcon, CardIcon, CartIcon, CashIcon, ChevronIcon, LockIcon, QrIcon, ShieldIcon } from '../components/icons.tsx'
@@ -9,11 +10,32 @@ import { useAuth } from '../context/AuthContext.tsx'
 import { useCart } from '../context/CartContext.tsx'
 import { indianStates } from '../data/india.ts'
 import { formatPrice } from '../lib/money.ts'
-import { createOrderId, saveOrderRecord, savePlacedOrder } from '../lib/orders.ts'
+import { ApiError, api, errorMessage } from '../lib/api.ts'
+import { useStoreSettings } from '../lib/catalog.ts'
+import type { ApiOrder } from '../lib/orders.ts'
+import { payWithRazorpay } from '../lib/razorpay.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import {
+  addressLabels,
+  cardBrand,
+  formatCard,
+  formatExpiry,
+  isExpired,
+  luhnValid,
+  parseExpiry,
+  savedCardBody,
+  savedPaymentSub,
+  savedPaymentTitle,
+  stripNonDigits,
+  upiIdValid,
+  useSavedAddresses,
+  useSavedPayments,
+} from '../lib/wallet.ts'
 
 type Payment = 'upi' | 'card' | 'netbanking' | 'cod'
 type Errors = Record<string, string>
+
+const apiMethod: Record<Payment, 'UPI' | 'CARD' | 'NETBANKING' | 'COD'> = { upi: 'UPI', card: 'CARD', netbanking: 'NETBANKING', cod: 'COD' }
 
 const methods: { id: Payment; label: string; hint: string; icon: typeof CardIcon }[] = [
   { id: 'upi', label: 'UPI', hint: 'GPay, PhonePe, Paytm', icon: QrIcon },
@@ -25,28 +47,6 @@ const methods: { id: Payment; label: string; hint: string; icon: typeof CardIcon
 const upiApps = ['Google Pay', 'PhonePe', 'Paytm', 'BHIM']
 const banks = ['HDFC Bank', 'ICICI Bank', 'SBI', 'Axis Bank', 'Kotak', 'Yes Bank', 'PNB', 'Bank of Baroda']
 const ADDRESS_KEY = 'clickmart-address'
-
-const stripNonDigits = (value: string) => value.replace(/\D/g, '')
-const formatCard = (value: string) => stripNonDigits(value).slice(0, 16).replace(/(.{4})/g, '$1 ').trim()
-const formatExpiry = (value: string) => {
-  const digits = stripNonDigits(value).slice(0, 4)
-  return digits.length > 2 ? `${digits.slice(0, 2)}/${digits.slice(2)}` : digits
-}
-const cardBrand = (digits: string) => {
-  if (/^4/.test(digits)) return 'VISA'
-  if (/^(5[1-5]|2[2-7])/.test(digits)) return 'Mastercard'
-  if (/^3[47]/.test(digits)) return 'Amex'
-  if (/^(60|65|81|82)/.test(digits)) return 'RuPay'
-  return ''
-}
-const expiryValid = (value: string) => {
-  const match = /^(\d{2})\/(\d{2})$/.exec(value)
-  if (!match) return false
-  const month = Number(match[1])
-  const year = 2000 + Number(match[2])
-  if (month < 1 || month > 12) return false
-  return new Date(year, month, 0, 23, 59) >= new Date()
-}
 
 function loadAddress() {
   try {
@@ -77,13 +77,45 @@ export function CheckoutPage() {
   const [upiApp, setUpiApp] = useState('')
   const [card, setCard] = useState({ number: '', name: '', expiry: '', cvv: '' })
   const [bank, setBank] = useState('')
+  const [savedId, setSavedId] = useState<{ UPI: string; CARD: string }>({ UPI: '', CARD: '' })
+  const [saveMethod, setSaveMethod] = useState(true)
+  const [saveAddress, setSaveAddress] = useState(true)
+  const [addressId, setAddressId] = useState('')
   const [errors, setErrors] = useState<Errors>({})
   const [processing, setProcessing] = useState(false)
   const [failed, setFailed] = useState('')
   const [placed, setPlaced] = useState(false)
-  const timer = useRef<number>(0)
+  const settings = useStoreSettings()
 
-  useEffect(() => () => window.clearTimeout(timer.current), [])
+  // Logged-in customers: start from their default saved address (once, and only into an empty form).
+  const queryClient = useQueryClient()
+  const addresses = useSavedAddresses(user?.id)
+  const savedPayments = useSavedPayments(user?.id)
+  const [prefilled, setPrefilled] = useState(false)
+  const chooseAddress = (item: NonNullable<typeof addresses.data>[number]) => {
+    setAddressId(item.id)
+    setErrors({})
+    setForm((current) => ({ ...current, email: current.email || user?.email || '', name: item.name, phone: item.phone, address: item.line, city: item.city, state: item.state, pin: item.pin }))
+  }
+  useEffect(() => {
+    const chosen = addresses.data?.find((item) => item.isDefault) ?? addresses.data?.[0]
+    if (prefilled || !chosen) return
+    setPrefilled(true)
+    if (!form.address) chooseAddress(chosen)
+    else setAddressId('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addresses.data, prefilled])
+
+  // Pre-select the default saved UPI ID / card once they load.
+  useEffect(() => {
+    const list = savedPayments.data ?? []
+    setSavedId((current) => ({
+      UPI: current.UPI || list.find((item) => item.kind === 'UPI' && item.isDefault)?.id || list.find((item) => item.kind === 'UPI')?.id || '',
+      CARD: current.CARD || list.find((item) => item.kind === 'CARD' && !isExpired(item) && item.isDefault)?.id || list.find((item) => item.kind === 'CARD' && !isExpired(item))?.id || '',
+    }))
+  }, [savedPayments.data])
+  const savedList = (savedPayments.data ?? []).filter((item) => item.kind === (payment === 'card' ? 'CARD' : 'UPI'))
+  const selectedSaved = payment === 'upi' || payment === 'card' ? savedList.find((item) => item.id === savedId[payment === 'card' ? 'CARD' : 'UPI']) : undefined
 
   const set = (key: keyof typeof form, value: string) => {
     setForm((current) => ({ ...current, [key]: value }))
@@ -104,13 +136,17 @@ export function CheckoutPage() {
 
   const validatePayment = () => {
     const next: Errors = {}
-    if (payment === 'upi' && !/^[\w.-]{2,}@[a-z]{2,}$/i.test(upiId.trim())) next.upi = 'Enter a valid UPI ID, e.g. name@okhdfc'
+    if (payment === 'upi' && !selectedSaved && !upiIdValid(upiId)) next.upi = 'Enter a valid UPI ID, e.g. name@okhdfc'
     if (payment === 'card') {
-      const digits = stripNonDigits(card.number)
-      if (digits.length < 13) next.number = 'Enter a valid card number'
-      if (card.name.trim().length < 2) next.cardName = 'Enter the name on the card'
-      if (!expiryValid(card.expiry)) next.expiry = 'Enter a valid expiry'
-      if (!/^\d{3,4}$/.test(card.cvv)) next.cvv = 'Enter CVV'
+      if (selectedSaved) {
+        if (!/^\d{3,4}$/.test(card.cvv)) next.cvv = 'Enter the CVV to pay with this card'
+      } else {
+        const digits = stripNonDigits(card.number)
+        if (!luhnValid(digits)) next.number = 'Enter a valid card number'
+        if (card.name.trim().length < 2) next.cardName = 'Enter the name on the card'
+        if (!parseExpiry(card.expiry)) next.expiry = 'Enter a valid expiry'
+        if (!/^\d{3,4}$/.test(card.cvv)) next.cvv = 'Enter CVV'
+      }
     }
     if (payment === 'netbanking' && !bank) next.bank = 'Choose your bank'
     setErrors(next)
@@ -125,68 +161,77 @@ export function CheckoutPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const placeOrder = () => {
+  const placeOrder = async () => {
     if (!validatePayment() || cart.lines.length === 0 || processing) return
     setFailed('')
-    const digits = stripNonDigits(card.number)
-    const delay = payment === 'cod' ? 900 : 2400
     setProcessing(true)
-    timer.current = window.setTimeout(() => {
-      // Test hook: this card number always declines so the failure state can be exercised.
-      if (payment === 'card' && digits.endsWith('0002')) {
-        setProcessing(false)
-        setFailed('Your bank declined this card. Try another card or a different payment method.')
-        return
+    const digits = selectedSaved ? (selectedSaved.last4 ?? '') : stripNonDigits(card.number)
+    let providerOrderId: string | null = null
+    try {
+      const result = await api<{ order: ApiOrder; payment: { provider: 'mock' | 'razorpay'; providerOrderId: string; keyId?: string; amount: number } | null }>('/checkout', {
+        body: {
+          items: cart.lines.map((line) => ({ variantId: line.variantId, quantity: line.quantity })),
+          couponCode: cart.coupon?.code ?? null,
+          paymentMethod: apiMethod[payment],
+          // Display details only. The card number and CVV never leave this browser.
+          paymentDetail:
+            payment === 'upi' ? (selectedSaved ? { savedPaymentId: selectedSaved.id } : { upiId: upiId.trim() })
+            : payment === 'card' ? (selectedSaved ? { savedPaymentId: selectedSaved.id } : { cardBrand: cardBrand(digits) || 'Card', cardLast4: digits.slice(-4) })
+            : payment === 'netbanking' ? { bank }
+            : undefined,
+          customer: { name: form.name.trim(), email: form.email.trim(), phone: form.phone },
+          address: { line: form.address.trim(), city: form.city.trim(), state: form.state, pin: form.pin },
+        },
+      })
+      let order = result.order
+      if (result.payment) {
+        providerOrderId = result.payment.providerOrderId
+        const started = Date.now()
+        let paid: { providerPaymentId: string; signature: string }
+        if (result.payment.provider === 'razorpay') {
+          paid = await payWithRazorpay({ keyId: result.payment.keyId!, orderId: providerOrderId, amount: result.payment.amount, customer: { name: form.name.trim(), email: form.email.trim(), phone: form.phone } })
+        } else {
+          // Development gateway. A card ending 0002 is declined so the failure path can be seen.
+          const outcome = (payment === 'card' && digits.endsWith('0002')) || (payment === 'upi' && upiId.trim().toLowerCase().startsWith('fail@')) ? 'failure' : 'success'
+          paid = await api<{ providerPaymentId: string; signature: string }>('/payments/mock/pay', { body: { providerOrderId, outcome } })
+        }
+        // Keep the "processing" moment long enough to read, like a real bank page.
+        await new Promise((resolve) => window.setTimeout(resolve, Math.max(0, 1800 - (Date.now() - started))))
+        order = (await api<{ order: ApiOrder }>('/payments/verify', { body: { providerOrderId, ...paid } })).order
       }
-      const id = createOrderId()
-      const placedAt = Date.now()
-      const detail =
-        payment === 'upi'
-          ? upiId.trim()
-          : payment === 'card'
-            ? `${cardBrand(digits) || 'Card'} •••• ${digits.slice(-4)}`
-            : payment === 'netbanking'
-              ? bank
-              : 'Pay on delivery'
-      const label = methods.find((item) => item.id === payment)?.label ?? payment
       setPlaced(true)
-      saveOrderRecord({
-        id,
-        placedAt,
-        customer: form.name.trim(),
-        phone: form.phone,
-        email: form.email.trim(),
-        address: form.address.trim(),
-        city: form.city.trim(),
-        state: form.state,
-        pin: form.pin,
-        lines: cart.lines.map((line) => ({
-          name: line.name,
-          slug: line.slug,
-          size: line.size,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
-          image: line.image,
-          art: line.art,
-        })),
-        subtotal: cart.subtotal,
-        discount: cart.discount,
-        shipping: cart.shipping,
-        total: cart.total,
-        coupon: cart.coupon?.code ?? null,
-        payment: { method: label, detail, paid: payment !== 'cod', ref: `TXN${Date.now().toString().slice(-9)}` },
-      })
-      savePlacedOrder({
-        id,
-        customer: form.name.trim(),
-        items: cart.lines.map((line) => `${line.name} (${line.size})`).join(', '),
-        amount: cart.total,
-        status: 'Processing',
-        date: new Date(placedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-      })
       cart.clear()
-      navigate(`/order/${id}`, { replace: true, state: { fresh: true } })
-    }, delay)
+      if (user && (!addresses.data?.length || (!addressId && saveAddress))) {
+        // First order, or the shopper asked to keep a new address.
+        api('/me/addresses', { body: { name: form.name.trim(), phone: form.phone, line: form.address.trim(), city: form.city.trim(), state: form.state, pin: form.pin, isDefault: !addresses.data?.length } })
+          .then(() => queryClient.invalidateQueries({ queryKey: ['addresses'] }))
+          .catch(() => undefined)
+      }
+      if (user && saveMethod && !selectedSaved && result.payment) {
+        const body =
+          payment === 'upi' ? { kind: 'UPI', upiId: upiId.trim() }
+          : payment === 'card' ? savedCardBody(card)
+          : null
+        if (body) {
+          api('/me/payment-methods', { body })
+            .then(() => queryClient.invalidateQueries({ queryKey: ['payment-methods'] }))
+            .catch(() => undefined)
+        }
+      }
+      navigate(`/order/${order.code}`, { replace: true, state: { order } })
+    } catch (error) {
+      if (providerOrderId && !(error instanceof ApiError && error.status === 402)) {
+        // The shopper closed the payment window or it errored: release the held stock right away.
+        api('/payments/fail', { body: { providerOrderId, reason: errorMessage(error) } }).catch(() => undefined)
+      }
+      setFailed(
+        error instanceof ApiError && error.status === 402
+          ? 'Your bank declined this payment. Try another card or a different payment method.'
+          : errorMessage(error),
+      )
+    } finally {
+      setProcessing(false)
+    }
   }
 
   if (cart.lines.length === 0 && !placed) {
@@ -201,6 +246,54 @@ export function CheckoutPage() {
       </Container>
     )
   }
+
+  const SavedPicker = ({ kind }: { kind: 'UPI' | 'CARD' }) => {
+    const items = (savedPayments.data ?? []).filter((item) => item.kind === kind)
+    if (!items.length) return null
+    const key = kind
+    return (
+      <div role="radiogroup" aria-label={kind === 'UPI' ? 'Saved UPI IDs' : 'Saved cards'} className="mt-4 space-y-2">
+        <p className="text-sm font-bold">{kind === 'UPI' ? 'Your saved UPI IDs' : 'Your saved cards'}</p>
+        {items.map((item) => {
+          const expired = isExpired(item)
+          const active = savedId[key] === item.id
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={expired}
+              onClick={() => { setSavedId((current) => ({ ...current, [key]: item.id })); setErrors({}) }}
+              className={`flex w-full items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left text-sm transition disabled:opacity-50 ${active ? 'border-brand bg-brand-soft' : 'border-line bg-white hover:border-brand/40'}`}
+            >
+              <span className={`grid size-5 place-items-center rounded-full border-2 ${active ? 'border-brand bg-brand text-[10px] text-white' : 'border-line'}`}>{active ? '✓' : ''}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-extrabold">{savedPaymentTitle(item)}</span>
+                <span className="block truncate text-xs text-muted">{expired ? 'Expired' : savedPaymentSub(item)}</span>
+              </span>
+              {item.isDefault && <span className="text-[10px] font-bold text-brand">Default</span>}
+            </button>
+          )
+        })}
+        <button
+          type="button"
+          onClick={() => { setSavedId((current) => ({ ...current, [key]: '' })); setErrors({}) }}
+          className={`w-full rounded-2xl border-2 border-dashed px-4 py-3 text-left text-sm font-bold transition ${!savedId[key] ? 'border-brand bg-brand-soft text-brand' : 'border-line text-muted hover:border-brand/40'}`}
+        >
+          + {kind === 'UPI' ? 'Use a different UPI ID' : 'Use a different card'}
+        </button>
+      </div>
+    )
+  }
+
+  const SaveToggle = () =>
+    user ? (
+      <label className="mt-3 flex items-center gap-2 text-sm font-semibold">
+        <input type="checkbox" checked={saveMethod} onChange={(e) => setSaveMethod(e.target.checked)} /> Save for next time
+        <span className="text-xs font-normal text-muted">{payment === 'card' ? '(last 4 digits only, never the CVV)' : ''}</span>
+      </label>
+    ) : null
 
   const payLabel = payment === 'cod' ? 'Place order' : `Pay ${formatPrice(cart.total)}`
 
@@ -224,29 +317,58 @@ export function CheckoutPage() {
               <form onSubmit={continueToPayment} noValidate className="card motion-page p-5 sm:p-7">
                 <h2 className="text-xl font-extrabold">Delivery details</h2>
                 <p className="mt-1 text-sm text-muted">Where should we send your order?</p>
+                {!!addresses.data?.length && (
+                  <div role="radiogroup" aria-label="Saved addresses" className="mt-5 grid gap-3 sm:grid-cols-2">
+                    {addresses.data.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={addressId === item.id}
+                        onClick={() => chooseAddress(item)}
+                        className={`relative rounded-2xl border-2 p-4 text-left text-sm transition ${addressId === item.id ? 'border-brand bg-brand-soft' : 'border-line bg-white hover:border-brand/40'}`}
+                      >
+                        <span className="flex items-center gap-2 font-extrabold">
+                          {item.name}
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-muted ring-1 ring-line">{addressLabels[item.label] ?? 'Home'}</span>
+                          {item.isDefault && <span className="text-[10px] font-bold text-brand">Default</span>}
+                        </span>
+                        <span className="mt-1 block leading-5 text-muted">{item.line}, {item.city}, {item.state} {item.pin}</span>
+                        <span className="block text-xs text-muted">+91 {item.phone}</span>
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => { setAddressId(''); setErrors({}); setForm((current) => ({ ...current, address: '', city: '', pin: '' })) }}
+                      className={`rounded-2xl border-2 border-dashed p-4 text-left text-sm font-bold transition ${!addressId ? 'border-brand bg-brand-soft text-brand' : 'border-line text-muted hover:border-brand/40'}`}
+                    >
+                      + Deliver to a new address
+                    </button>
+                  </div>
+                )}
                 <div className="mt-6 grid gap-5 sm:grid-cols-2">
-                  <Field label="Full name" error={errors.name} className="sm:col-span-2">
+                  <Field label="Full name" error={errors.name} className={`sm:col-span-2 ${addressId ? 'hidden' : ''}`}>
                     <input value={form.name} onChange={(e) => set('name', e.target.value)} autoComplete="name" className="field" aria-invalid={!!errors.name} placeholder="As on your ID" />
                   </Field>
                   <Field label="Email" error={errors.email}>
                     <input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" className="field" aria-invalid={!!errors.email} placeholder="you@example.com" />
                   </Field>
-                  <Field label="Mobile number" error={errors.phone}>
+                  <Field label="Mobile number" error={errors.phone} className={addressId ? 'hidden' : ''}>
                     <div className="flex">
                       <span className="grid h-12 place-items-center rounded-l-[0.85rem] border-[1.5px] border-r-0 border-line bg-canvas px-3 text-sm font-bold text-muted">+91</span>
                       <input value={form.phone} onChange={(e) => set('phone', stripNonDigits(e.target.value).slice(0, 10))} inputMode="numeric" autoComplete="tel-national" className="field rounded-l-none!" aria-invalid={!!errors.phone} placeholder="98765 43210" />
                     </div>
                   </Field>
-                  <Field label="Address" error={errors.address} className="sm:col-span-2">
+                  <Field label="Address" error={errors.address} className={`sm:col-span-2 ${addressId ? 'hidden' : ''}`}>
                     <textarea value={form.address} onChange={(e) => set('address', e.target.value)} autoComplete="street-address" rows={3} className="field" aria-invalid={!!errors.address} placeholder="House no., building, street, area" />
                   </Field>
-                  <Field label="PIN code" error={errors.pin}>
+                  <Field label="PIN code" error={errors.pin} className={addressId ? 'hidden' : ''}>
                     <input value={form.pin} onChange={(e) => set('pin', stripNonDigits(e.target.value).slice(0, 6))} inputMode="numeric" autoComplete="postal-code" className="field" aria-invalid={!!errors.pin} placeholder="560025" />
                   </Field>
-                  <Field label="City" error={errors.city}>
+                  <Field label="City" error={errors.city} className={addressId ? 'hidden' : ''}>
                     <input value={form.city} onChange={(e) => set('city', e.target.value)} autoComplete="address-level2" className="field" aria-invalid={!!errors.city} placeholder="Bengaluru" />
                   </Field>
-                  <Field label="State" className="sm:col-span-2">
+                  <Field label="State" className={`sm:col-span-2 ${addressId ? 'hidden' : ''}`}>
                     <select value={form.state} onChange={(e) => set('state', e.target.value)} className="field cursor-pointer">
                       {indianStates.map((state) => (
                         <option key={state}>{state}</option>
@@ -254,6 +376,11 @@ export function CheckoutPage() {
                     </select>
                   </Field>
                 </div>
+                {user && !addressId && !!addresses.data?.length && (
+                  <label className="mt-5 flex items-center gap-2 text-sm font-semibold">
+                    <input type="checkbox" checked={saveAddress} onChange={(e) => setSaveAddress(e.target.checked)} /> Save this address for next time
+                  </label>
+                )}
                 <div className="mt-6 flex items-center gap-3 rounded-2xl bg-brand-soft p-4 text-sm">
                   <ShieldIcon className="size-6 shrink-0 text-brand" />
                   <p className="text-ink-soft">
@@ -293,7 +420,7 @@ export function CheckoutPage() {
                   )}
 
                   <div role="radiogroup" aria-label="Payment method" className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                    {methods.map((method) => {
+                    {methods.filter((method) => method.id !== 'cod' || settings.codEnabled).map((method) => {
                       const active = payment === method.id
                       return (
                         <button
@@ -338,9 +465,15 @@ export function CheckoutPage() {
                             </button>
                           ))}
                         </div>
-                        <Field label="UPI ID" error={errors.upi} className="mt-5">
-                          <input value={upiId} onChange={(e) => { setUpiId(e.target.value); setErrors({}) }} className="field" aria-invalid={!!errors.upi} placeholder="yourname@okhdfcbank" autoCapitalize="none" />
-                        </Field>
+                        {SavedPicker({ kind: 'UPI' })}
+                        {!selectedSaved && (
+                          <>
+                            <Field label="UPI ID" error={errors.upi} className="mt-5">
+                              <input value={upiId} onChange={(e) => { setUpiId(e.target.value); setErrors({}) }} className="field" aria-invalid={!!errors.upi} placeholder="yourname@okhdfcbank" autoCapitalize="none" />
+                            </Field>
+                            {SaveToggle()}
+                          </>
+                        )}
                         <p className="mt-2 text-xs text-muted">
                           {upiApp ? `A collect request will be sent to your ${upiApp} app.` : 'You will get a collect request on your UPI app to approve.'}
                         </p>
@@ -348,7 +481,17 @@ export function CheckoutPage() {
                     )}
 
                     {payment === 'card' && (
-                      <div className="grid gap-5 sm:grid-cols-2">
+                      <div>
+                        {SavedPicker({ kind: 'CARD' })}
+                        {selectedSaved ? (
+                          <div className="mt-4 grid max-w-xs gap-5">
+                            <Field label={`CVV for ${savedPaymentTitle(selectedSaved)}`} error={errors.cvv}>
+                              <input type="password" value={card.cvv} onChange={(e) => { setCard({ ...card, cvv: stripNonDigits(e.target.value).slice(0, 4) }); setErrors({}) }} inputMode="numeric" autoComplete="cc-csc" className="field font-mono" aria-invalid={!!errors.cvv} placeholder="•••" />
+                            </Field>
+                            <p className="-mt-3 text-xs text-muted">For your safety we never store the CVV.</p>
+                          </div>
+                        ) : (
+                          <div className="grid gap-5 sm:grid-cols-2">
                         <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-brand-dark via-brand to-[#2f6bd6] p-5 text-white shadow-lift sm:col-span-2 sm:max-w-sm">
                           <div className="absolute -top-10 -right-10 size-36 rounded-full bg-white/10" />
                           <div className="flex items-center justify-between">
@@ -373,6 +516,9 @@ export function CheckoutPage() {
                         <Field label="CVV" error={errors.cvv}>
                           <input type="password" value={card.cvv} onChange={(e) => { setCard({ ...card, cvv: stripNonDigits(e.target.value).slice(0, 4) }); setErrors({}) }} inputMode="numeric" autoComplete="cc-csc" className="field font-mono" aria-invalid={!!errors.cvv} placeholder="•••" />
                         </Field>
+                        <div className="sm:col-span-2">{SaveToggle()}</div>
+                      </div>
+                        )}
                       </div>
                     )}
 

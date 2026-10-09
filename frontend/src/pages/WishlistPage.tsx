@@ -6,16 +6,18 @@ import { Breadcrumbs } from '../components/ui/Breadcrumbs.tsx'
 import { EmptyState } from '../components/ui/Primitives.tsx'
 import { useCart } from '../context/CartContext.tsx'
 import { useWishlist } from '../context/WishlistContext.tsx'
-import { featuredPack, products } from '../data/products.ts'
+import { featuredPack, useProducts, useProductsByIds } from '../lib/catalog.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function WishlistPage() {
   useDocumentTitle('Wishlist')
   const wishlist = useWishlist()
   const { addItem } = useCart()
-  const saved = products.filter((product) => wishlist.ids.includes(product.id))
-  const suggestions = products.filter((p) => !wishlist.ids.includes(p.id) && p.bestseller).slice(0, 4)
-  const addAll = () => saved.filter((p) => p.inStock).forEach((p) => addItem(p.id, featuredPack(p).size))
+  const savedQuery = useProductsByIds(wishlist.ids)
+  const saved = (savedQuery.data ?? []).filter((product) => wishlist.ids.includes(product.id))
+  const best = useProducts({ bestseller: true, pageSize: 8 })
+  const suggestions = (best.data?.items ?? []).filter((p) => !wishlist.ids.includes(p.id)).slice(0, 4)
+  const addAll = () => saved.filter((p) => p.inStock).forEach((p) => addItem(featuredPack(p).variantId, 1, p.name))
 
   return (
     <div className="bg-canvas">
@@ -24,11 +26,11 @@ export function WishlistPage() {
         <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight">My wishlist</h1>
-            <p className="mt-1 text-sm text-muted">{saved.length} saved {saved.length === 1 ? 'item' : 'items'}</p>
+            <p className="mt-1 text-sm text-muted">{wishlist.ids.length} saved {wishlist.ids.length === 1 ? 'item' : 'items'}</p>
           </div>
           {saved.length > 0 && (
             <div className="flex gap-3">
-              <button type="button" onClick={() => saved.forEach((p) => wishlist.toggle(p.id))} className="btn btn-outline btn-sm">
+              <button type="button" onClick={() => wishlist.clear()} className="btn btn-outline btn-sm">
                 Clear all
               </button>
               <button type="button" onClick={addAll} className="btn btn-accent btn-sm">
@@ -38,7 +40,7 @@ export function WishlistPage() {
           )}
         </div>
 
-        {saved.length === 0 ? (
+        {wishlist.ids.length === 0 ? (
           <div className="mt-10">
             <EmptyState
               icon={<HeartIcon className="size-9" />}

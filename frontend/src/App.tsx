@@ -1,23 +1,15 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
-import { AdminLayout } from './components/layout/AdminLayout.tsx'
+import { ApiError } from './lib/api.ts'
 import { StoreLayout } from './components/layout/StoreLayout.tsx'
 import { AuthProvider } from './context/AuthContext.tsx'
 import { CartProvider } from './context/CartContext.tsx'
 import { WishlistProvider } from './context/WishlistContext.tsx'
 import { AboutPage } from './pages/AboutPage.tsx'
-import {
-  AnalyticsAdminPage,
-  BannersAdminPage,
-  CategoriesAdminPage,
-  CouponsAdminPage,
-  CustomersAdminPage,
-  OrdersAdminPage,
-  ProductsAdminPage,
-  ReviewsAdminPage,
-  SettingsAdminPage,
-} from './pages/admin/ManagePages.tsx'
-import { DashboardPage } from './pages/admin/DashboardPage.tsx'
+import { RequireAuth } from './components/auth/RequireAuth.tsx'
 import { AuthPage } from './pages/AuthPage.tsx'
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage.tsx'
+import { ResetPasswordPage } from './pages/ResetPasswordPage.tsx'
 import { CartPage } from './pages/CartPage.tsx'
 import { CheckoutPage } from './pages/CheckoutPage.tsx'
 import { ContactPage } from './pages/ContactPage.tsx'
@@ -35,8 +27,18 @@ import { RecipesPage } from './pages/RecipesPage.tsx'
 import { ShopPage } from './pages/ShopPage.tsx'
 import { WellnessPage } from './pages/WellnessPage.tsx'
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: (count, error) => !(error instanceof ApiError && error.status < 500 && error.status !== 0) && count < 2,
+    },
+  },
+})
+
 export default function App() {
   return (
+    <QueryClientProvider client={queryClient}>
     <AuthProvider>
       <CartProvider>
         <WishlistProvider>
@@ -47,13 +49,13 @@ export default function App() {
                 <Route path="shop" element={<ShopPage />} />
                 <Route path="product/:slug" element={<ProductPage />} />
                 <Route path="cart" element={<CartPage />} />
-                <Route path="checkout" element={<CheckoutPage />} />
-                <Route path="order/:id" element={<OrderPage />} />
+                <Route path="checkout" element={<RequireAuth><CheckoutPage /></RequireAuth>} />
+                <Route path="order/:id" element={<RequireAuth><OrderPage /></RequireAuth>} />
                 <Route path="sale" element={<SalePage />} />
-                <Route path="orders" element={<OrdersPage />} />
+                <Route path="orders" element={<RequireAuth><OrdersPage /></RequireAuth>} />
                 <Route path="wishlist" element={<WishlistPage />} />
-                <Route path="settings" element={<SettingsPage />} />
-                <Route path="account" element={<SettingsPage />} />
+                <Route path="settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
+                <Route path="account" element={<RequireAuth><SettingsPage /></RequireAuth>} />
                 <Route path="track" element={<TrackPage />} />
                 <Route path="track/:id" element={<TrackPage />} />
                 <Route path="about" element={<AboutPage />} />
@@ -61,27 +63,17 @@ export default function App() {
                 <Route path="recipes" element={<RecipesPage />} />
                 <Route path="contact" element={<ContactPage />} />
                 <Route path="login" element={<AuthPage />} />
+                <Route path="forgot-password" element={<ForgotPasswordPage />} />
+                <Route path="reset-password" element={<ResetPasswordPage />} />
                 <Route path="privacy" element={<PrivacyPage />} />
                 <Route path="terms" element={<TermsPage />} />
                 <Route path="*" element={<NotFoundPage />} />
-              </Route>
-              <Route path="admin" element={<AdminLayout />}>
-                <Route index element={<DashboardPage />} />
-                <Route path="products" element={<ProductsAdminPage />} />
-                <Route path="categories" element={<CategoriesAdminPage />} />
-                <Route path="sale" element={<SalePage />} />
-                <Route path="orders" element={<OrdersAdminPage />} />
-                <Route path="customers" element={<CustomersAdminPage />} />
-                <Route path="coupons" element={<CouponsAdminPage />} />
-                <Route path="reviews" element={<ReviewsAdminPage />} />
-                <Route path="banners" element={<BannersAdminPage />} />
-                <Route path="analytics" element={<AnalyticsAdminPage />} />
-                <Route path="settings" element={<SettingsAdminPage />} />
               </Route>
             </Routes>
           </BrowserRouter>
         </WishlistProvider>
       </CartProvider>
     </AuthProvider>
+    </QueryClientProvider>
   )
 }

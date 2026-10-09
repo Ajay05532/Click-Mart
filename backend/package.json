@@ -8,14 +8,13 @@
     "build": "tsc -p tsconfig.json --noEmit false",
     "start": "node dist/src/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
-    "db:seed": "tsx prisma/seed.ts",
-    "db:reset": "prisma migrate reset --force",
-    "test": "NODE_ENV=test tsx --test src/tests/*.test.ts"
+    "db:seed": "tsx scripts/seed.ts",
+    "test": "NODE_ENV=test tsx --test src/tests/*.test.ts",
+    "db:local": "docker compose up -d",
+    "db:local:reset": "bash scripts/local-reset.sh"
   },
   "dependencies": {
-    "@prisma/client": "^6.19.3",
+    "@supabase/supabase-js": "^2.117.3",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -37,11 +36,7 @@
     "@types/multer": "^2.3.0",
     "@types/node": "^26.6.4",
     "@types/nodemailer": "^8.0.2",
-    "prisma": "^6.19.3",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
-  },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
   }
 }

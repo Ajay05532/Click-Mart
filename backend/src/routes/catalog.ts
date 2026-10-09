@@ -1,12 +1,13 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { findAccountById } from '../lib/account.js'
+import { from, db, maybe, rows, type Row  } from '../lib/db.js'
 import { notFound } from '../lib/errors.js'
 import { buildQuote, loadActiveOffers } from '../lib/pricing.js'
-import { prisma } from '../lib/prisma.js'
 import { serializeProduct } from '../lib/serializers.js'
 import { getSettings } from '../lib/settings.js'
+import { PRODUCT_SELECT, type Product } from '../lib/types.js'
 import { actor, requireAuth } from '../middleware/auth.js'
-import type { Prisma } from '@prisma/client'
 
 export const catalogRouter = Router()
 
@@ -14,6 +15,7 @@ const listQuery = z.object({
   category: z.union([z.string(), z.array(z.string())]).optional(),
   sub: z.string().optional(),
   q: z.string().trim().max(80).optional(),
+  ids: z.string().max(2000).optional(), // comma-separated product ids (wishlist, recently viewed)
   minPrice: z.coerce.number().int().min(0).optional(),
   maxPrice: z.coerce.number().int().min(0).optional(),
   size: z.union([z.string(), z.array(z.string())]).optional(),
@@ -25,29 +27,33 @@ const listQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(60).default(12),
 })
 const arr = (value?: string | string[]) => (value === undefined ? [] : Array.isArray(value) ? value : [value])
+/** Escapes characters that have meaning inside a PostgREST filter value. */
+const like = (value: string) => value.replace(/[%,()*\\]/g, ' ')
 
 catalogRouter.get('/products', async (req, res) => {
   const query = listQuery.parse(req.query)
   const categories = arr(query.category)
   const sizes = arr(query.size)
-  const where: Prisma.ProductWhereInput = { isActive: true, variants: { some: { isActive: true } } }
-  const and: Prisma.ProductWhereInput[] = []
-  if (categories.length) and.push({ categoryId: { in: categories } })
-  if (query.sub) and.push({ subcategoryId: query.sub })
-  if (query.q) {
-    and.push({ OR: [{ name: { contains: query.q, mode: 'insensitive' } }, { blurb: { contains: query.q, mode: 'insensitive' } }] })
-  }
-  if (query.bestseller === 'true') and.push({ isBestseller: true })
-  if (sizes.length) and.push({ variants: { some: { size: { in: sizes }, isActive: true } } })
-  if (query.availability === 'in') and.push({ variants: { some: { stock: { gt: 0 }, isActive: true } } })
-  if (query.availability === 'out') and.push({ variants: { none: { stock: { gt: 0 } } } })
-  where.AND = and
 
-  const [offers, rows] = await Promise.all([
-    loadActiveOffers(),
-    prisma.product.findMany({ where, include: { variants: true, category: true } }),
-  ])
-  let items = rows.map((row) => serializeProduct(row, offers))
+  let request = from('Product').select(PRODUCT_SELECT).eq('isActive', true)
+  if (categories.length) request = request.in('categoryId', categories)
+  if (query.sub) request = request.eq('subcategoryId', query.sub)
+  if (query.ids) request = request.in('id', query.ids.split(',').map((id) => id.trim()).filter(Boolean).slice(0, 100))
+  if (query.bestseller === 'true') request = request.eq('isBestseller', true)
+  if (query.q) request = request.or(`name.ilike.%${like(query.q)}%,blurb.ilike.%${like(query.q)}%`)
+
+  const [offers, products] = await Promise.all([loadActiveOffers(), rows<Product>(request)])
+  let items = products
+    .filter((product) => (product.variants ?? []).some((variant) => variant.isActive))
+    .filter((product) => {
+      const active = (product.variants ?? []).filter((variant) => variant.isActive)
+      if (sizes.length && !active.some((variant) => sizes.includes(variant.size))) return false
+      const inStock = active.some((variant) => variant.stock > 0)
+      if (query.availability === 'in' && !inStock) return false
+      if (query.availability === 'out' && inStock) return false
+      return true
+    })
+    .map((product) => serializeProduct(product, offers))
 
   const feat = (item: (typeof items)[number]) => item.packs.find((pack) => pack.size === item.featuredSize) ?? item.packs[0]
   items = items.filter((item) => {
@@ -87,25 +93,19 @@ catalogRouter.get('/products', async (req, res) => {
 catalogRouter.get('/products/:slug', async (req, res) => {
   const [offers, product] = await Promise.all([
     loadActiveOffers(),
-    prisma.product.findFirst({
-      where: { slug: String(req.params.slug), isActive: true },
-      include: { variants: true, category: true, subcategory: true },
-    }),
+    maybe<Product>(from('Product').select(PRODUCT_SELECT).eq('slug', String(req.params.slug)).eq('isActive', true).maybeSingle()),
   ])
   if (!product) throw notFound('Product')
-  const related = await prisma.product.findMany({
-    where: { isActive: true, id: { not: product.id }, categoryId: product.categoryId },
-    include: { variants: true, category: true },
-    orderBy: { sold: 'desc' },
-    take: 4,
-  })
+  const related = await rows<Product>(
+    from('Product').select(PRODUCT_SELECT).eq('isActive', true).neq('id', product.id).eq('categoryId', product.categoryId).order('sold', { ascending: false }).limit(4),
+  )
   res.json({ product: serializeProduct(product, offers), related: related.map((item) => serializeProduct(item, offers)) })
 })
 
 catalogRouter.get('/products/:slug/reviews', async (req, res) => {
-  const product = await prisma.product.findUnique({ where: { slug: String(req.params.slug) } })
+  const product = await maybe<{ id: string }>(from('Product').select('id').eq('slug', String(req.params.slug)).maybeSingle())
   if (!product) throw notFound('Product')
-  const items = await prisma.review.findMany({ where: { productId: product.id, status: 'APPROVED' }, orderBy: { createdAt: 'desc' }, take: 50 })
+  const items = await rows(from('Review').select('*').eq('productId', product.id).eq('status', 'APPROVED').order('createdAt', { ascending: false }).limit(50))
   res.json({ items })
 })
 
@@ -113,53 +113,50 @@ catalogRouter.post('/products/:slug/reviews', requireAuth, async (req, res) => {
   const data = z
     .object({ rating: z.number().int().min(1).max(5), comment: z.string().trim().min(5).max(1000), city: z.string().trim().max(60).optional() })
     .parse(req.body)
-  const product = await prisma.product.findUnique({ where: { slug: String(req.params.slug) } })
+  const product = await maybe<{ id: string }>(from('Product').select('id').eq('slug', String(req.params.slug)).maybeSingle())
   if (!product) throw notFound('Product')
-  const user = await prisma.user.findUniqueOrThrow({ where: { id: actor(req).id } })
-  const purchased = await prisma.orderItem.count({
-    where: { productId: product.id, order: { userId: user.id, status: { in: ['DELIVERED', 'SHIPPED', 'OUT_FOR_DELIVERY'] } } },
-  })
-  const review = await prisma.review.create({
-    data: { productId: product.id, userId: user.id, name: user.name, city: data.city ?? 'India', rating: data.rating, comment: data.comment, verified: purchased > 0 },
-  })
-  res.status(201).json({ review, message: 'Thanks! Your review will appear once it is approved.' })
+  const userId = actor(req).id
+  const user = await findAccountById(userId)
+  if (!user) throw notFound('Account')
+  // A "verified buyer" has a shipped or delivered order containing this product.
+  const orders = await rows<{ id: string }>(from('Order').select('id').eq('userId', userId).in('status', ['DELIVERED', 'SHIPPED', 'OUT_FOR_DELIVERY']))
+  const purchased = orders.length
+    ? (await rows(from('OrderItem').select('id').eq('productId', product.id).in('orderId', orders.map((order) => order.id)).limit(1))).length > 0
+    : false
+  const review = await rows(
+    from('Review').insert({ productId: product.id, userId, name: user.name, city: data.city ?? 'India', rating: data.rating, comment: data.comment, verified: purchased }).select(),
+  )
+  res.status(201).json({ review: review[0], message: 'Thanks! Your review will appear once it is approved.' })
 })
 
 catalogRouter.get('/categories', async (_req, res) => {
-  const [categories, counts] = await Promise.all([
-    prisma.category.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
-    prisma.product.groupBy({ by: ['categoryId'], where: { isActive: true }, _count: true }),
+  const [categories, products] = await Promise.all([
+    rows<Row>(from('Category').select('*').eq('isActive', true).order('sortOrder').order('name')),
+    rows<{ categoryId: string; subcategoryId: string | null }>(from('Product').select('categoryId, subcategoryId').eq('isActive', true)),
   ])
-  const subCounts = await prisma.product.groupBy({ by: ['subcategoryId'], where: { isActive: true, subcategoryId: { not: null } }, _count: true })
-  const countOf = (id: string) => counts.find((row) => row.categoryId === id)?._count ?? subCounts.find((row) => row.subcategoryId === id)?._count ?? 0
-  const top = categories.filter((category) => !category.parentId)
+  const countOf = (id: string) => products.filter((product) => product.categoryId === id || product.subcategoryId === id).length
   res.json({
-    items: top.map((category) => ({
-      id: category.id,
-      name: category.name,
-      tagline: category.tagline,
-      image: category.image,
-      art: category.art,
-      productCount: countOf(category.id),
-      subcategories: categories
-        .filter((child) => child.parentId === category.id)
-        .map((child) => ({ id: child.id, name: child.name, productCount: countOf(child.id) })),
-    })),
+    items: categories
+      .filter((category) => !category.parentId)
+      .map((category) => ({
+        id: category.id,
+        name: category.name,
+        tagline: category.tagline,
+        image: category.image,
+        art: category.art,
+        productCount: countOf(category.id),
+        subcategories: categories.filter((child) => child.parentId === category.id).map((child) => ({ id: child.id, name: child.name, productCount: countOf(child.id) })),
+      })),
   })
 })
 
 // Everything currently on offer, grouped for the On Sale page.
 catalogRouter.get('/offers', async (_req, res) => {
-  const [offers, products] = await Promise.all([
-    loadActiveOffers(),
-    prisma.product.findMany({ where: { isActive: true }, include: { variants: true, category: true } }),
-  ])
+  const [offers, products] = await Promise.all([loadActiveOffers(), rows<Product>(from('Product').select(PRODUCT_SELECT).eq('isActive', true))])
   const deals = products
     .map((product) => serializeProduct(product, offers))
     .map((product) => {
-      const best = product.packs
-        .map((pack) => ({ pack, off: Math.round((1 - pack.price / pack.mrp) * 100) }))
-        .sort((a, b) => b.off - a.off)[0]
+      const best = product.packs.map((pack) => ({ pack, off: Math.round((1 - pack.price / pack.mrp) * 100) })).sort((a, b) => b.off - a.off)[0]
       return { product, bestPack: best?.pack ?? null, discountPercent: best?.off ?? 0 }
     })
     .filter((deal) => deal.discountPercent > 0)
@@ -172,19 +169,11 @@ catalogRouter.get('/offers', async (_req, res) => {
 })
 
 catalogRouter.get('/coupons/active', async (_req, res) => {
-  const now = new Date()
-  const items = await prisma.coupon.findMany({
-    where: {
-      isActive: true,
-      AND: [
-        { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
-        { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
-      ],
-    },
-    orderBy: { createdAt: 'desc' },
-  })
+  const now = Date.now()
+  const items = await rows<Row>(from('Coupon').select('*').eq('isActive', true).order('createdAt', { ascending: false }))
   res.json({
     items: items
+      .filter((coupon) => (!coupon.startsAt || new Date(coupon.startsAt).getTime() <= now) && (!coupon.endsAt || new Date(coupon.endsAt).getTime() >= now))
       .filter((coupon) => coupon.usageLimit === null || coupon.usedCount < coupon.usageLimit)
       .map((coupon) => ({ code: coupon.code, label: coupon.label, type: coupon.type, value: coupon.value, minOrder: coupon.minOrder, endsAt: coupon.endsAt })),
   })
@@ -192,18 +181,10 @@ catalogRouter.get('/coupons/active', async (_req, res) => {
 
 catalogRouter.get('/banners', async (req, res) => {
   const placement = z.enum(['HERO', 'PROMO']).optional().parse(req.query.placement)
-  const now = new Date()
-  const items = await prisma.banner.findMany({
-    where: {
-      isActive: true,
-      placement,
-      AND: [
-        { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
-        { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
-      ],
-    },
-    orderBy: { sortOrder: 'asc' },
-  })
+  const now = Date.now()
+  let request = from('Banner').select('*').eq('isActive', true).order('sortOrder')
+  if (placement) request = request.eq('placement', placement)
+  const items = (await rows<Row>(request)).filter((banner) => (!banner.startsAt || new Date(banner.startsAt).getTime() <= now) && (!banner.endsAt || new Date(banner.endsAt).getTime() >= now))
   res.json({ items })
 })
 

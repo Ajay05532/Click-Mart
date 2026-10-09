@@ -1,12 +1,13 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { peopleByIds } from '../../lib/account.js'
 import { audit } from '../../lib/audit.js'
+import { from, count, db, exec, maybe, one, rows, rpc, toHttpError, type Row  } from '../../lib/db.js'
 import { badRequest, conflict, notFound } from '../../lib/errors.js'
-import { prisma } from '../../lib/prisma.js'
 import { slugify } from '../../lib/slug.js'
 import { getSettings } from '../../lib/settings.js'
+import type { Product, Variant } from '../../lib/types.js'
 import { actor, adminOnly } from '../../middleware/auth.js'
-import type { Prisma } from '@prisma/client'
 
 export const adminCatalogRouter = Router()
 
@@ -17,6 +18,8 @@ const variantSchema = z.object({
   stock: z.number().int().min(0).default(0),
   lowStockAt: z.number().int().min(0).optional(),
   sku: z.string().trim().max(60).optional(),
+  barcode: z.string().trim().max(32).nullish(),
+  weightGrams: z.number().int().min(1).max(100000).nullish(),
   isActive: z.boolean().default(true),
 })
 
@@ -31,6 +34,12 @@ const productFields = {
   nutrition: z.array(z.object({ label: z.string().max(60), value: z.string().max(60) })).max(20).default([]),
   images: z.array(z.string().max(500)).max(8).default([]),
   art: z.string().max(20).default('mix'),
+  brandId: z.string().nullish(),
+  hsnCode: z.string().trim().max(8).nullish(),
+  gstPercent: z.number().int().min(0).max(28).default(5),
+  countryOfOrigin: z.string().trim().max(60).default('India'),
+  ingredients: z.string().max(2000).default(''),
+  shelfLifeDays: z.number().int().min(1).max(3650).nullish(),
   isActive: z.boolean().default(true),
   isBestseller: z.boolean().default(false),
   featuredSize: z.string().nullish(),
@@ -47,15 +56,87 @@ const createSchema = z
   })
 
 const sku = (slug: string, size: string) => `${slug}-${size}`.toUpperCase().replace(/[^A-Z0-9]+/g, '-')
+const like = (value: string) => value.replace(/[%,()*\\]/g, ' ')
+
+/** "250g" -> 250, "1kg" -> 1000. Pack sizes that are not a weight stay unset. */
+function weightFromSize(size: string) {
+  const match = size.trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(kg|g)$/)
+  if (!match) return null
+  const amount = Number(match[1])
+  return match[2] === 'kg' ? Math.round(amount * 1000) : Math.round(amount)
+}
+
+function variantRow<T extends { size: string; barcode?: string | null; weightGrams?: number | null }>(data: T) {
+  return {
+    ...data,
+    barcode: data.barcode?.trim() || null,
+    weightGrams: data.weightGrams ?? weightFromSize(data.size),
+  }
+}
+
+function productRow<T extends { brandId?: string | null; hsnCode?: string | null; shelfLifeDays?: number | null }>(data: T) {
+  const row = { ...data }
+  if ('brandId' in data) row.brandId = data.brandId || null
+  if ('hsnCode' in data) row.hsnCode = data.hsnCode?.trim() || null
+  if ('shelfLifeDays' in data) row.shelfLifeDays = data.shelfLifeDays ?? null
+  return row
+}
+
+async function assertBrand(brandId?: string | null) {
+  if (!brandId) return
+  const brand = await maybe<Row>(from('Brand').select('id').eq('id', brandId).maybeSingle())
+  if (!brand) throw badRequest('Choose a valid brand')
+}
 
 async function assertCategory(categoryId: string, subcategoryId?: string | null) {
-  const category = await prisma.category.findUnique({ where: { id: categoryId } })
+  const category = await maybe<Row>(from('Category').select('id, parentId').eq('id', categoryId).maybeSingle())
   if (!category || category.parentId) throw badRequest('Choose a valid category')
   if (subcategoryId) {
-    const sub = await prisma.category.findUnique({ where: { id: subcategoryId } })
+    const sub = await maybe<Row>(from('Category').select('id, parentId').eq('id', subcategoryId).maybeSingle())
     if (!sub || sub.parentId !== categoryId) throw badRequest('That subcategory does not belong to the chosen category')
   }
 }
+
+const PRODUCT_ADMIN_SELECT = '*, variants:ProductVariant(*), category:Category!categoryId(name), brand:Brand(id, name)'
+
+adminCatalogRouter.get('/brands', async (req, res) => {
+  let request = from('Brand').select('id, name, slug, isActive').order('name')
+  if (req.query.all !== '1') request = request.eq('isActive', true)
+  res.json({ items: await rows(request) })
+})
+
+adminCatalogRouter.post('/brands', async (req, res) => {
+  const data = z.object({ name: z.string().trim().min(2).max(80) }).parse(req.body)
+  const slug = slugify(data.name)
+  if (await maybe(from('Brand').select('id').eq('slug', slug).maybeSingle())) throw conflict('A brand with this name already exists')
+  const brand = await one<Row>(from('Brand').insert({ name: data.name, slug }).select('id, name, slug, isActive').single())
+  await audit(actor(req).id, 'brand.create', 'Brand', brand.id, { name: data.name })
+  res.status(201).json({ brand })
+})
+
+adminCatalogRouter.patch('/brands/:id', async (req, res) => {
+  const data = z.object({ name: z.string().trim().min(2).max(80).optional(), isActive: z.boolean().optional() }).parse(req.body)
+  const id = String(req.params.id)
+  const patch: { name?: string; slug?: string; isActive?: boolean } = {}
+  if (data.name) {
+    const slug = slugify(data.name)
+    const taken = await maybe<{ id: string }>(from('Brand').select('id').eq('slug', slug).maybeSingle())
+    if (taken && taken.id !== id) throw conflict('A brand with this name already exists')
+    patch.name = data.name
+    patch.slug = slug
+  }
+  if (data.isActive !== undefined) patch.isActive = data.isActive
+  const brand = await one(from('Brand').update(patch).eq('id', id).select('id, name, slug, isActive').single())
+  await audit(actor(req).id, 'brand.update', 'Brand', id, data)
+  res.json({ brand })
+})
+
+adminCatalogRouter.delete('/brands/:id', async (req, res) => {
+  const id = String(req.params.id)
+  await exec(from('Brand').delete().eq('id', id))
+  await audit(actor(req).id, 'brand.delete', 'Brand', id)
+  res.json({ ok: true })
+})
 
 adminCatalogRouter.get('/products', async (req, res) => {
   const q = z
@@ -68,86 +149,103 @@ adminCatalogRouter.get('/products', async (req, res) => {
     })
     .parse(req.query)
   const settings = await getSettings()
-  const where: Prisma.ProductWhereInput = {}
-  if (q.q) where.OR = [{ name: { contains: q.q, mode: 'insensitive' } }, { slug: { contains: q.q, mode: 'insensitive' } }]
-  if (q.category) where.categoryId = q.category
-  if (q.status === 'active') where.isActive = true
-  if (q.status === 'inactive') where.isActive = false
-  if (q.status === 'out') where.variants = { none: { stock: { gt: 0 } } }
-  const [rows, total] = await Promise.all([
-    prisma.product.findMany({ where, include: { variants: { orderBy: { sortOrder: 'asc' } }, category: true }, orderBy: { updatedAt: 'desc' }, skip: (q.page - 1) * q.pageSize, take: q.pageSize }),
-    prisma.product.count({ where }),
-  ])
-  let items = rows.map((product) => ({
-    ...product,
-    stock: product.variants.reduce((sum, variant) => sum + variant.stock, 0),
-    lowStock: product.variants.some((variant) => variant.stock <= (variant.lowStockAt ?? settings.lowStockDefault)),
-  }))
+  let request = from('Product').select(PRODUCT_ADMIN_SELECT, { count: 'exact' }).order('updatedAt', { ascending: false })
+  if (q.q) request = request.or(`name.ilike.%${like(q.q)}%,slug.ilike.%${like(q.q)}%`)
+  if (q.category) request = request.eq('categoryId', q.category)
+  if (q.status === 'active') request = request.eq('isActive', true)
+  if (q.status === 'inactive') request = request.eq('isActive', false)
+
+  // Stock-based filters depend on a sum over variants, so they are applied after loading.
+  const stockFilter = q.status === 'lowstock' || q.status === 'out'
+  if (!stockFilter) request = request.range((q.page - 1) * q.pageSize, q.page * q.pageSize - 1)
+  const { data, error, count: total } = await request
+  if (error) throw toHttpError(error)
+  let items = ((data ?? []) as Product[]).map((product) => {
+    const variants = [...(product.variants ?? [])].sort((a, b) => a.sortOrder - b.sortOrder)
+    return {
+      ...product,
+      variants,
+      stock: variants.reduce((sum, variant) => sum + variant.stock, 0),
+      lowStock: variants.some((variant) => variant.stock <= (variant.lowStockAt ?? settings.lowStockDefault)),
+    }
+  })
+  let totalCount = total ?? items.length
+  if (q.status === 'out') items = items.filter((item) => item.stock === 0)
   if (q.status === 'lowstock') items = items.filter((item) => item.lowStock)
-  res.json({ items, total, page: q.page, pages: Math.max(1, Math.ceil(total / q.pageSize)) })
+  if (stockFilter) {
+    totalCount = items.length
+    items = items.slice((q.page - 1) * q.pageSize, q.page * q.pageSize)
+  }
+  res.json({ items, total: totalCount, page: q.page, pages: Math.max(1, Math.ceil(totalCount / q.pageSize)) })
 })
 
 adminCatalogRouter.get('/products/:id', async (req, res) => {
-  const product = await prisma.product.findUnique({ where: { id: String(req.params.id) }, include: { variants: { orderBy: { sortOrder: 'asc' } }, category: true } })
+  const product = await maybe<Product>(from('Product').select(PRODUCT_ADMIN_SELECT).eq('id', String(req.params.id)).maybeSingle())
   if (!product) throw notFound('Product')
+  product.variants = [...(product.variants ?? [])].sort((a, b) => a.sortOrder - b.sortOrder)
   res.json({ product })
 })
 
 adminCatalogRouter.post('/products', async (req, res) => {
   const data = createSchema.parse(req.body)
   await assertCategory(data.categoryId, data.subcategoryId)
+  await assertBrand(data.brandId)
   const slug = slugify(data.slug || data.name)
-  if (await prisma.product.findUnique({ where: { slug } })) throw conflict('A product with this URL name already exists')
+  if (await maybe(from('Product').select('id').eq('slug', slug).maybeSingle())) throw conflict('A product with this URL name already exists')
   const { variants, ...rest } = data
-  const product = await prisma.product.create({
-    data: {
-      ...rest,
-      slug,
-      featuredSize: data.featuredSize ?? variants[0]!.size,
-      variants: {
-        create: variants.map((variant, index) => ({
-          ...variant,
-          sku: variant.sku || sku(slug, variant.size),
-          lowStockAt: variant.lowStockAt ?? 10,
-          sortOrder: index,
-        })),
-      },
-    },
-    include: { variants: true },
-  })
-  for (const variant of product.variants) {
-    if (variant.stock > 0) {
-      await prisma.stockMovement.create({ data: { variantId: variant.id, delta: variant.stock, reason: 'RESTOCK', note: 'Opening stock', balance: variant.stock, userId: actor(req).id } })
-    }
+  const product = await one<Product>(
+    from('Product').insert({ ...productRow(rest), slug, subcategoryId: data.subcategoryId ?? null, featuredSize: data.featuredSize ?? variants[0]!.size }).select().single(),
+  )
+  try {
+    await rpc('set_product_images', { p_product_id: product.id, p_urls: data.images })
+    const created = await rows<Variant>(
+      from('ProductVariant').insert(
+        variants.map((variant, index) => ({ ...variantRow(variant), productId: product.id, sku: variant.sku || sku(slug, variant.size), lowStockAt: variant.lowStockAt ?? 10, sortOrder: index })),
+      ).select(),
+    )
+    const opening = created.filter((variant) => variant.stock > 0).map((variant) => ({ variantId: variant.id, delta: variant.stock, reason: 'RESTOCK', note: 'Opening stock', balance: variant.stock, userId: actor(req).id }))
+    if (opening.length) await exec(from('StockMovement').insert(opening))
+    product.variants = created
+  } catch (error) {
+    await from('Product').delete().eq('id', product.id) // no half-created product
+    throw error
   }
   await audit(actor(req).id, 'product.create', 'Product', product.id, { name: product.name })
   res.status(201).json({ product })
 })
 
 adminCatalogRouter.patch('/products/:id', async (req, res) => {
-  const data = z.object(productFields).partial().parse(req.body)
-  const existing = await prisma.product.findUnique({ where: { id: String(req.params.id) } })
+  const body = req.body as Record<string, unknown>
+  const parsed = z.object(productFields).partial().parse(body)
+  // Defaults on the create schema must not fill fields the caller did not send.
+  const data = Object.fromEntries(Object.entries(parsed).filter(([key]) => Object.prototype.hasOwnProperty.call(body, key))) as Partial<z.infer<ReturnType<typeof z.object<typeof productFields>>>>
+  const existing = await maybe<Product>(from('Product').select('*').eq('id', String(req.params.id)).maybeSingle())
   if (!existing) throw notFound('Product')
   if (data.categoryId || data.subcategoryId !== undefined) {
     await assertCategory(data.categoryId ?? existing.categoryId, data.subcategoryId === undefined ? existing.subcategoryId : data.subcategoryId)
   }
+  if (data.brandId !== undefined) await assertBrand(data.brandId)
   const slug = data.slug ? slugify(data.slug) : undefined
-  if (slug && slug !== existing.slug && (await prisma.product.findUnique({ where: { slug } }))) throw conflict('A product with this URL name already exists')
-  const product = await prisma.product.update({ where: { id: existing.id }, data: { ...data, slug }, include: { variants: true } })
+  if (slug && slug !== existing.slug && (await maybe(from('Product').select('id').eq('slug', slug).maybeSingle()))) throw conflict('A product with this URL name already exists')
+  const product = await one<Product>(
+    from('Product').update({ ...productRow(data), ...(slug ? { slug } : {}) }).eq('id', existing.id).select('*, variants:ProductVariant(*)').single(),
+  )
+  if (data.images) await rpc('set_product_images', { p_product_id: product.id, p_urls: data.images })
   await audit(actor(req).id, 'product.update', 'Product', product.id, data)
   res.json({ product })
 })
 
 adminCatalogRouter.delete('/products/:id', adminOnly, async (req, res) => {
-  const used = await prisma.orderItem.count({ where: { productId: String(req.params.id) } })
+  const id = String(req.params.id)
+  const used = await count(from('OrderItem').select('id', { count: 'exact', head: true }).eq('productId', id))
   if (used > 0) {
     // Past orders keep their snapshots, but hiding is safer than deleting something that has sold.
-    await prisma.product.update({ where: { id: String(req.params.id) }, data: { isActive: false } })
-    await audit(actor(req).id, 'product.archive', 'Product', String(req.params.id))
+    await exec(from('Product').update({ isActive: false }).eq('id', id))
+    await audit(actor(req).id, 'product.archive', 'Product', id)
     return res.json({ archived: true, message: 'This product has orders, so it was hidden instead of deleted.' })
   }
-  await prisma.product.delete({ where: { id: String(req.params.id) } })
-  await audit(actor(req).id, 'product.delete', 'Product', String(req.params.id))
+  await exec(from('Product').delete().eq('id', id))
+  await audit(actor(req).id, 'product.delete', 'Product', id)
   res.json({ deleted: true })
 })
 
@@ -159,18 +257,18 @@ adminCatalogRouter.post('/products/bulk', async (req, res) => {
       percent: z.number().min(-90).max(200).optional(),
     })
     .parse(req.body)
-  const where = { id: { in: data.ids } }
-  if (data.action === 'activate') await prisma.product.updateMany({ where, data: { isActive: true } })
-  if (data.action === 'deactivate') await prisma.product.updateMany({ where, data: { isActive: false } })
-  if (data.action === 'bestseller') await prisma.product.updateMany({ where, data: { isBestseller: true } })
-  if (data.action === 'unbestseller') await prisma.product.updateMany({ where, data: { isBestseller: false } })
+  const patch = (changes: Record<string, boolean>) => exec(from('Product').update(changes).in('id', data.ids))
+  if (data.action === 'activate') await patch({ isActive: true })
+  if (data.action === 'deactivate') await patch({ isActive: false })
+  if (data.action === 'bestseller') await patch({ isBestseller: true })
+  if (data.action === 'unbestseller') await patch({ isBestseller: false })
   if (data.action === 'priceChange') {
     if (data.percent === undefined) throw badRequest('percent is required')
-    const variants = await prisma.productVariant.findMany({ where: { productId: { in: data.ids } } })
-    await prisma.$transaction(
+    const variants = await rows<Variant>(from('ProductVariant').select('*').in('productId', data.ids))
+    await Promise.all(
       variants.map((variant) => {
         const price = Math.max(1, Math.round((variant.price * (100 + data.percent!)) / 100))
-        return prisma.productVariant.update({ where: { id: variant.id }, data: { price, mrp: Math.max(variant.mrp, price) } })
+        return exec(from('ProductVariant').update({ price, mrp: Math.max(variant.mrp, price) }).eq('id', variant.id))
       }),
     )
   }
@@ -182,13 +280,13 @@ adminCatalogRouter.post('/products/bulk', async (req, res) => {
 adminCatalogRouter.post('/products/:id/variants', async (req, res) => {
   const data = variantSchema.parse(req.body)
   if (data.mrp < data.price) throw badRequest('MRP cannot be lower than the selling price')
-  const product = await prisma.product.findUnique({ where: { id: String(req.params.id) }, include: { variants: true } })
+  const product = await maybe<Product>(from('Product').select('id, slug, variants:ProductVariant(id)').eq('id', String(req.params.id)).maybeSingle())
   if (!product) throw notFound('Product')
-  const variant = await prisma.productVariant.create({
-    data: { ...data, productId: product.id, sku: data.sku || sku(product.slug, data.size), lowStockAt: data.lowStockAt ?? 10, sortOrder: product.variants.length },
-  })
+  const variant = await one<Variant>(
+    from('ProductVariant').insert({ ...variantRow(data), productId: product.id, sku: data.sku || sku(product.slug, data.size), lowStockAt: data.lowStockAt ?? 10, sortOrder: product.variants?.length ?? 0 }).select().single(),
+  )
   if (variant.stock > 0) {
-    await prisma.stockMovement.create({ data: { variantId: variant.id, delta: variant.stock, reason: 'RESTOCK', note: 'Opening stock', balance: variant.stock, userId: actor(req).id } })
+    await exec(from('StockMovement').insert({ variantId: variant.id, delta: variant.stock, reason: 'RESTOCK', note: 'Opening stock', balance: variant.stock, userId: actor(req).id }))
   }
   await audit(actor(req).id, 'variant.create', 'ProductVariant', variant.id)
   res.status(201).json({ variant })
@@ -197,24 +295,31 @@ adminCatalogRouter.post('/products/:id/variants', async (req, res) => {
 adminCatalogRouter.patch('/variants/:id', async (req, res) => {
   // Stock is changed only through the stock endpoint so every change is logged.
   const data = variantSchema.omit({ stock: true }).partial().parse(req.body)
-  const existing = await prisma.productVariant.findUnique({ where: { id: String(req.params.id) } })
+  const existing = await maybe<Variant>(from('ProductVariant').select('*').eq('id', String(req.params.id)).maybeSingle())
   if (!existing) throw notFound('Variant')
   if ((data.mrp ?? existing.mrp) < (data.price ?? existing.price)) throw badRequest('MRP cannot be lower than the selling price')
-  const variant = await prisma.productVariant.update({ where: { id: existing.id }, data })
+  const next = {
+    ...data,
+    ...(data.barcode !== undefined ? { barcode: data.barcode?.trim() || null } : {}),
+    ...(data.weightGrams !== undefined || data.size ? { weightGrams: data.weightGrams ?? weightFromSize(data.size ?? existing.size) } : {}),
+  }
+  const variant = await one<Variant>(from('ProductVariant').update(next).eq('id', existing.id).select().single())
   await audit(actor(req).id, 'variant.update', 'ProductVariant', variant.id, data)
   res.json({ variant })
 })
 
 adminCatalogRouter.delete('/variants/:id', async (req, res) => {
-  const variant = await prisma.productVariant.findUnique({ where: { id: String(req.params.id) }, include: { product: { include: { variants: true } } } })
+  const variant = await maybe<Variant & { product: { variants: { id: string }[] } }>(
+    from('ProductVariant').select('*, product:Product(variants:ProductVariant(id))').eq('id', String(req.params.id)).maybeSingle(),
+  )
   if (!variant) throw notFound('Variant')
   if (variant.product.variants.length === 1) throw badRequest('A product needs at least one pack size')
-  const sold = await prisma.orderItem.count({ where: { variantId: variant.id } })
+  const sold = await count(from('OrderItem').select('id', { count: 'exact', head: true }).eq('variantId', variant.id))
   if (sold > 0) {
-    await prisma.productVariant.update({ where: { id: variant.id }, data: { isActive: false } })
+    await exec(from('ProductVariant').update({ isActive: false }).eq('id', variant.id))
     return res.json({ archived: true })
   }
-  await prisma.productVariant.delete({ where: { id: variant.id } })
+  await exec(from('ProductVariant').delete().eq('id', variant.id))
   res.json({ deleted: true })
 })
 
@@ -227,27 +332,17 @@ adminCatalogRouter.post('/variants/:id/stock', async (req, res) => {
       note: z.string().max(200).optional(),
     })
     .parse(req.body)
-  const result = await prisma.$transaction(async (tx) => {
-    const variant = await tx.productVariant.findUnique({ where: { id: String(req.params.id) } })
-    if (!variant) throw notFound('Variant')
-    const delta = data.mode === 'set' ? data.quantity - variant.stock : data.quantity
-    if (variant.stock + delta < 0) throw badRequest(`Only ${variant.stock} in stock, cannot remove ${-delta}`)
-    if (data.mode === 'set' && data.quantity < 0) throw badRequest('Stock cannot be negative')
-    if (delta === 0) return variant
-    // Conditional update keeps the balance right even if a sale lands at the same moment.
-    const updated = await tx.productVariant.updateMany({
-      where: { id: variant.id, stock: { gte: delta < 0 ? -delta : 0 } },
-      data: { stock: { increment: delta } },
-    })
-    if (updated.count === 0) throw conflict('Stock changed while you were editing. Refresh and try again.')
-    const fresh = await tx.productVariant.findUniqueOrThrow({ where: { id: variant.id } })
-    await tx.stockMovement.create({
-      data: { variantId: variant.id, delta, reason: data.reason, note: data.note, balance: fresh.stock, userId: actor(req).id },
-    })
-    return fresh
+  // Locks the row and logs the change in one transaction, so a sale at the same moment cannot corrupt the balance.
+  const variant = await rpc<Variant>('adjust_stock', {
+    p_variant_id: String(req.params.id),
+    p_mode: data.mode,
+    p_quantity: data.quantity,
+    p_reason: data.reason,
+    p_note: data.note ?? null,
+    p_user: actor(req).id,
   })
-  await audit(actor(req).id, 'stock.change', 'ProductVariant', result.id, data)
-  res.json({ variant: result })
+  await audit(actor(req).id, 'stock.change', 'ProductVariant', variant.id, data)
+  res.json({ variant })
 })
 
 adminCatalogRouter.get('/inventory', async (req, res) => {
@@ -259,27 +354,27 @@ adminCatalogRouter.get('/inventory', async (req, res) => {
       pageSize: z.coerce.number().int().min(1).max(200).default(50),
     })
     .parse(req.query)
-  const rows = await prisma.productVariant.findMany({
-    where: { product: q.q ? { name: { contains: q.q, mode: 'insensitive' } } : undefined },
-    include: { product: { select: { id: true, name: true, slug: true, images: true, art: true, isActive: true } } },
-    orderBy: [{ stock: 'asc' }, { sku: 'asc' }],
-  })
-  const filtered = rows.filter((variant) => (q.filter === 'out' ? variant.stock === 0 : q.filter === 'low' ? variant.stock <= variant.lowStockAt : true))
+  const all = await rows<Variant & { product: Row }>(
+    from('ProductVariant').select('*, product:Product!inner(id, name, slug, images, art, isActive)').order('stock').order('sku'),
+  )
+  const needle = q.q?.toLowerCase()
+  const matching = needle ? all.filter((variant) => String(variant.product.name).toLowerCase().includes(needle)) : all
+  const filtered = matching.filter((variant) => (q.filter === 'out' ? variant.stock === 0 : q.filter === 'low' ? variant.stock <= variant.lowStockAt : true))
   res.json({
     items: filtered.slice((q.page - 1) * q.pageSize, q.page * q.pageSize),
     total: filtered.length,
-    summary: { out: rows.filter((v) => v.stock === 0).length, low: rows.filter((v) => v.stock > 0 && v.stock <= v.lowStockAt).length, variants: rows.length },
+    summary: { out: matching.filter((v) => v.stock === 0).length, low: matching.filter((v) => v.stock > 0 && v.stock <= v.lowStockAt).length, variants: matching.length },
   })
 })
 
 adminCatalogRouter.get('/inventory/:variantId/history', async (req, res) => {
-  const items = await prisma.stockMovement.findMany({
-    where: { variantId: String(req.params.variantId) },
-    include: { user: { select: { name: true } } },
-    orderBy: { createdAt: 'desc' },
-    take: 100,
-  })
-  res.json({ items })
+  const items = await rows(
+    from('StockMovement').select('*').eq('variantId', String(req.params.variantId)).order('createdAt', { ascending: false }).limit(100),
+  )
+  const userIds = [...new Set(items.map((item) => item.userId).filter(Boolean))] as string[]
+  const namesById = await peopleByIds(userIds)
+  const names = new Map([...namesById].map(([id, person]) => [id, person.name]))
+  res.json({ items: items.map((item) => ({ ...item, user: item.userId ? { name: names.get(item.userId) ?? null } : null })) })
 })
 
 // ---- Categories ----
@@ -295,40 +390,53 @@ const categorySchema = z.object({
 })
 
 adminCatalogRouter.get('/categories', async (_req, res) => {
-  const items = await prisma.category.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], include: { _count: { select: { products: true, subProducts: true } } } })
-  res.json({ items })
+  const [categories, products] = await Promise.all([
+    rows<Row>(from('Category').select('*').order('sortOrder').order('name')),
+    rows<{ categoryId: string; subcategoryId: string | null }>(from('Product').select('categoryId, subcategoryId')),
+  ])
+  res.json({
+    items: categories.map((category) => ({
+      ...category,
+      _count: {
+        products: products.filter((product) => product.categoryId === category.id).length,
+        subProducts: products.filter((product) => product.subcategoryId === category.id).length,
+      },
+    })),
+  })
 })
 
 adminCatalogRouter.post('/categories', async (req, res) => {
   const data = categorySchema.parse(req.body)
   const id = slugify(data.id || data.name)
   if (data.parentId) {
-    const parent = await prisma.category.findUnique({ where: { id: data.parentId } })
+    const parent = await maybe<Row>(from('Category').select('id, parentId').eq('id', data.parentId).maybeSingle())
     if (!parent || parent.parentId) throw badRequest('Subcategories can only sit under a top-level category')
   }
-  const category = await prisma.category.create({ data: { ...data, id } })
+  const category = await one(from('Category').insert({ ...data, id, image: data.image ?? null, parentId: data.parentId ?? null }).select().single())
   await audit(actor(req).id, 'category.create', 'Category', id)
   res.status(201).json({ category })
 })
 
 adminCatalogRouter.patch('/categories/:id', async (req, res) => {
   const data = categorySchema.omit({ id: true }).partial().parse(req.body)
-  if (data.parentId === String(req.params.id)) throw badRequest('A category cannot be its own parent')
-  const category = await prisma.category.update({ where: { id: String(req.params.id) }, data })
+  const id = String(req.params.id)
+  if (data.parentId === id) throw badRequest('A category cannot be its own parent')
+  const category = await one<Row>(from('Category').update(data).eq('id', id).select().single())
   await audit(actor(req).id, 'category.update', 'Category', category.id, data)
   res.json({ category })
 })
 
 adminCatalogRouter.post('/categories/reorder', async (req, res) => {
   const data = z.object({ ids: z.array(z.string()).min(1) }).parse(req.body)
-  await prisma.$transaction(data.ids.map((id, index) => prisma.category.update({ where: { id }, data: { sortOrder: index } })))
+  await Promise.all(data.ids.map((id, index) => exec(from('Category').update({ sortOrder: index }).eq('id', id))))
   res.json({ ok: true })
 })
 
 adminCatalogRouter.delete('/categories/:id', adminOnly, async (req, res) => {
-  const used = await prisma.product.count({ where: { OR: [{ categoryId: String(req.params.id) }, { subcategoryId: String(req.params.id) }] } })
+  const id = String(req.params.id)
+  const used = await count(from('Product').select('id', { count: 'exact', head: true }).or(`categoryId.eq.${id},subcategoryId.eq.${id}`))
   if (used > 0) throw conflict(`${used} products still use this category. Move them first.`)
-  await prisma.category.delete({ where: { id: String(req.params.id) } })
-  await audit(actor(req).id, 'category.delete', 'Category', String(req.params.id))
+  await exec(from('Category').delete().eq('id', id))
+  await audit(actor(req).id, 'category.delete', 'Category', id)
   res.json({ deleted: true })
 })

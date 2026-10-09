@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Container } from '../components/layout/Container.tsx'
 import { HeartIcon, TagIcon } from '../components/icons.tsx'
@@ -7,9 +7,8 @@ import { Breadcrumbs } from '../components/ui/Breadcrumbs.tsx'
 import { Stars } from '../components/ui/Stars.tsx'
 import { useCart } from '../context/CartContext.tsx'
 import { useWishlist } from '../context/WishlistContext.tsx'
-import { categories, products } from '../data/products.ts'
-import { coupons } from '../data/promotions.ts'
-import { FREE_SHIPPING_AT, discountPercent, formatPrice } from '../lib/money.ts'
+import { useActiveCoupons, useCategories, useOffers, useStoreSettings } from '../lib/catalog.ts'
+import { formatPrice } from '../lib/money.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 import type { CategoryId, Product } from '../types.ts'
 
@@ -19,12 +18,6 @@ const sorts = [
   { id: 'savings', label: 'Most savings (₹)' },
   { id: 'price', label: 'Price: low to high' },
 ] as const
-
-function bestDeal(product: Product) {
-  return product.packs
-    .map((pack) => ({ pack, off: discountPercent(pack.price, pack.mrp), save: pack.mrp - pack.price }))
-    .sort((a, b) => b.off - a.off || b.save - a.save)[0]
-}
 
 /** Time left until the end of today, so the sale banner always has a live countdown. */
 function useCountdown() {
@@ -48,19 +41,15 @@ export function SalePage() {
   const [copied, setCopied] = useState('')
   const [h, m, s] = useCountdown()
 
-  const deals = useMemo(() => {
-    return products
-      .map((product) => ({ product, ...bestDeal(product) }))
-      .filter((deal) => deal.off > 0 && deal.off >= tier && (category === 'all' || deal.product.category === category))
-      .sort((a, b) => {
-        if (sort === 'savings') return b.save - a.save
-        if (sort === 'price') return a.pack.price - b.pack.price
-        return b.off - a.off
-      })
-  }, [tier, category, sort])
-
-  const allDeals = products.map((product) => bestDeal(product)).filter((deal) => deal.off > 0)
-  const maxOff = Math.max(0, ...allDeals.map((deal) => deal.off))
+  const categories = useCategories().data ?? []
+  const coupons = useActiveCoupons().data ?? []
+  const offers = useOffers()
+  const all = (offers.data?.deals ?? []).filter((deal) => deal.bestPack).map((deal) => ({ product: deal.product, pack: deal.bestPack!, off: deal.discountPercent, save: deal.bestPack!.mrp - deal.bestPack!.price }))
+  const deals = all
+    .filter((deal) => deal.off >= tier && (category === 'all' || deal.product.category === category))
+    .sort((a, b) => (sort === 'savings' ? b.save - a.save : sort === 'price' ? a.pack.price - b.pack.price : b.off - a.off))
+  const maxOff = offers.data?.maxDiscount ?? 0
+  const topPercent = coupons.find((coupon) => coupon.type === 'PERCENT')
 
   const copy = async (code: string) => {
     try {
@@ -129,7 +118,7 @@ export function SalePage() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-lg leading-tight font-extrabold">
-                    {coupon.type === 'percent' ? `${coupon.value}% off` : 'Free shipping'}
+                    {coupon.type === 'PERCENT' ? `${coupon.value}% off` : coupon.type === 'FLAT' ? `${formatPrice(coupon.value)} off` : 'Free shipping'}
                   </p>
                   <p className="truncate text-xs text-muted">{coupon.label}</p>
                 </div>
@@ -191,7 +180,7 @@ export function SalePage() {
           ) : (
             <div className="stagger mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
               {deals.map((deal) => (
-                <DealCard key={deal.product.id} {...deal} />
+                <DealCard key={deal.product.id} {...deal} topPercent={topPercent} />
               ))}
             </div>
           )}
@@ -216,12 +205,13 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
   )
 }
 
-function DealCard({ product, pack, off, save }: { product: Product; pack: Product['packs'][number]; off: number; save: number }) {
+function DealCard({ product, pack, off, save, topPercent }: { product: Product; pack: Product['packs'][number]; off: number; save: number; topPercent?: { code: string; value: number } }) {
   const { addItem } = useCart()
   const wishlist = useWishlist()
   const saved = wishlist.has(product.id)
-  const withCode = Math.round((pack.price * (100 - 15)) / 100)
-  const freeShip = pack.price >= FREE_SHIPPING_AT
+  const settings = useStoreSettings()
+  const withCode = topPercent ? Math.round((pack.price * (100 - topPercent.value)) / 100) : null
+  const freeShip = pack.price >= settings.freeShippingThreshold
 
   return (
     <article className="group card flex overflow-hidden transition duration-300 hover:-translate-y-1 hover:shadow-lift">
@@ -260,10 +250,12 @@ function DealCard({ product, pack, off, save }: { product: Product; pack: Produc
             <span className="grid size-4 place-items-center rounded-full bg-emerald-100 text-[9px]">✓</span>
             You save {formatPrice(save)} on the {pack.size} pack
           </li>
+          {withCode !== null && topPercent && (
           <li className="flex items-center gap-1.5 font-semibold text-accent-dark">
             <TagIcon className="size-4" />
-            {formatPrice(withCode)} with code <span className="font-extrabold">DRY15</span>
+            {formatPrice(withCode!)} with code <span className="font-extrabold">{topPercent!.code}</span>
           </li>
+          )}
           {freeShip && (
             <li className="flex items-center gap-1.5 font-semibold text-brand">
               <span className="grid size-4 place-items-center rounded-full bg-brand-soft text-[9px]">✓</span>
@@ -280,7 +272,7 @@ function DealCard({ product, pack, off, save }: { product: Product; pack: Produc
         <button
           type="button"
           disabled={!product.inStock}
-          onClick={() => addItem(product.id, pack.size)}
+          onClick={() => addItem(pack.variantId, 1, product.name)}
           className="btn btn-brand btn-sm mt-auto w-full disabled:bg-slate-300"
           style={{ marginTop: '0.9rem' }}
         >

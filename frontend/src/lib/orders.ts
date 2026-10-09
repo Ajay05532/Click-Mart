@@ -1,178 +1,139 @@
-import { seedOrders } from '../data/admin.ts'
-import type { ArtTone, OrderStatus, PackSize, StoreOrder } from '../types.ts'
+import { useQuery } from '@tanstack/react-query'
+import { useAuth } from '../context/AuthContext.tsx'
+import { api, getAccessToken } from './api.ts'
 
-const KEY = 'clickmart-orders'
-const DETAIL_KEY = 'clickmart-order-details'
+export type OrderStatus = 'PLACED' | 'CONFIRMED' | 'PACKED' | 'SHIPPED' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED' | 'RETURNED'
 
-export function loadPlacedOrders(): StoreOrder[] {
-  try {
-    const raw = localStorage.getItem(KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as StoreOrder[]
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
+export type OrderItem = { id?: string; name: string; slug?: string | null; image: string | null; art: string | null; size: string; quantity: number; unitPrice?: number; mrp?: number }
+export type OrderEvent = { status: OrderStatus; note: string | null; at: string }
 
-export function savePlacedOrder(order: StoreOrder) {
-  const existing = loadPlacedOrders()
-  localStorage.setItem(KEY, JSON.stringify([order, ...existing]))
-}
-
-/* ---------- Rich order records (confirmation, history, tracking) ---------- */
-
-export type OrderLine = {
-  name: string
-  slug: string
-  size: PackSize
-  quantity: number
-  unitPrice: number
-  image: string | null
-  art: ArtTone
-}
-
-export type OrderRecord = {
+export type ApiOrder = {
   id: string
-  placedAt: number
-  customer: string
-  phone: string
-  email: string
-  address: string
-  city: string
-  state: string
-  pin: string
-  lines: OrderLine[]
+  code: string
+  status: OrderStatus
+  paymentStatus: 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED'
+  paymentMethod: 'UPI' | 'CARD' | 'NETBANKING' | 'COD'
+  payment?: { detail: string | null; status: string; failureReason: string | null; paidAt: string | null } | null
+  customer: { name: string; email: string; phone: string }
+  address: { line: string; city: string; state: string; pin: string }
+  items: (OrderItem & { unitPrice: number })[]
   subtotal: number
+  offerDiscount: number
   discount: number
   shipping: number
   total: number
-  coupon: string | null
-  payment: { method: string; detail: string; paid: boolean; ref: string }
+  couponCode: string | null
+  carrier: string | null
+  trackingNumber: string | null
+  events: OrderEvent[]
+  placedAt: string
+  estimatedDelivery: string
 }
 
-export function loadOrderRecords(): OrderRecord[] {
-  try {
-    const raw = localStorage.getItem(DETAIL_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as OrderRecord[]
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
+/** What the tracking page needs. Guests get a reduced view (no address or contact details). */
+export type TrackView = {
+  code: string
+  status: OrderStatus
+  paymentStatus: ApiOrder['paymentStatus']
+  items: OrderItem[]
+  total: number
+  events: OrderEvent[]
+  carrier: string | null
+  trackingNumber: string | null
+  placedAt: string
+  estimatedDelivery: string
+  city: string
+  name?: string
 }
 
-export function saveOrderRecord(record: OrderRecord) {
-  localStorage.setItem(DETAIL_KEY, JSON.stringify([record, ...loadOrderRecords()]))
+export const toTrackView = (order: ApiOrder): TrackView => ({
+  code: order.code,
+  status: order.status,
+  paymentStatus: order.paymentStatus,
+  items: order.items,
+  total: order.total,
+  events: order.events,
+  carrier: order.carrier,
+  trackingNumber: order.trackingNumber,
+  placedAt: order.placedAt,
+  estimatedDelivery: order.estimatedDelivery,
+  city: order.address.city,
+  name: order.customer.name,
+})
+
+export const useMyOrders = () => {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['orders', user?.id],
+    queryFn: () => api<{ items: ApiOrder[] }>('/orders').then((result) => result.items),
+    enabled: !!user,
+    staleTime: 15_000,
+  })
 }
 
-export function findOrderRecord(id: string): OrderRecord | undefined {
-  const needle = id.trim().toUpperCase()
-  return loadOrderRecords().find((order) => order.id.toUpperCase() === needle)
+export const useOrder = (code: string, enabled = true) => {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['order', code, user?.id],
+    queryFn: () => api<{ order: ApiOrder }>(`/orders/${encodeURIComponent(code)}`).then((result) => result.order),
+    enabled: enabled && !!user && !!code,
+    retry: false,
+  })
 }
 
-export function createOrderId() {
-  return `ORD-${Math.floor(2000 + Math.random() * 7000)}`
-}
-
-/* ---------- Tracking ---------- */
-
+/** The five steps shown to customers. Several back-office statuses can map to one step. */
 export const trackingStages = [
-  { key: 'placed', label: 'Order placed', note: 'We have received your order.', afterMin: 0, offsetH: 0 },
-  { key: 'packed', label: 'Packed fresh', note: 'Sealed and quality checked in Patna.', afterMin: 1, offsetH: 6 },
-  { key: 'shipped', label: 'Shipped', note: 'Handed to our courier partner.', afterMin: 3, offsetH: 20 },
-  { key: 'out', label: 'Out for delivery', note: 'Your pouches are on the way to you.', afterMin: 6, offsetH: 68 },
-  { key: 'delivered', label: 'Delivered', note: 'Enjoy your dry fruits!', afterMin: 10, offsetH: 74 },
+  { key: 'placed', label: 'Order placed', note: 'We have received your order.', statuses: ['PLACED', 'CONFIRMED'], expectedHours: 0 },
+  { key: 'packed', label: 'Packed fresh', note: 'Sealed and quality checked in our kitchen.', statuses: ['PACKED'], expectedHours: 6 },
+  { key: 'shipped', label: 'Shipped', note: 'Handed to our courier partner.', statuses: ['SHIPPED'], expectedHours: 20 },
+  { key: 'out', label: 'Out for delivery', note: 'Your pouches are on the way to you.', statuses: ['OUT_FOR_DELIVERY'], expectedHours: 68 },
+  { key: 'delivered', label: 'Delivered', note: 'Enjoy your dry fruits!', statuses: ['DELIVERED'], expectedHours: 74 },
 ] as const
 
-/**
- * Demo clock: the storefront has no courier backend, so progress advances
- * with minutes since the order was placed. Seeded orders map from their status.
- */
-export function stageIndex(placedAt: number, now = Date.now()) {
-  const minutes = (now - placedAt) / 60000
-  let index = 0
-  trackingStages.forEach((stage, i) => {
-    if (minutes >= stage.afterMin) index = i
-  })
-  return index
+const statusToStage: Record<OrderStatus, number> = { PLACED: 0, CONFIRMED: 0, PACKED: 1, SHIPPED: 2, OUT_FOR_DELIVERY: 3, DELIVERED: 4, CANCELLED: 0, RETURNED: 4 }
+
+export const isEnded = (status: OrderStatus) => status === 'CANCELLED' || status === 'RETURNED'
+
+/** Index (0-4) of the furthest step reached. For cancelled/returned orders, the furthest step before the end. */
+export function stageOf(view: Pick<TrackView, 'status' | 'events'>) {
+  if (!isEnded(view.status)) return statusToStage[view.status]
+  const reached = view.events.filter((event) => !isEnded(event.status)).map((event) => statusToStage[event.status])
+  return Math.max(0, ...reached)
 }
 
-const statusStage: Record<OrderStatus, number> = {
-  Processing: 1,
-  Shipped: 2,
-  Delivered: 4,
-  Cancelled: 0,
+export function stageTime(view: Pick<TrackView, 'events'>, index: number) {
+  const stage = trackingStages[index]!
+  const event = view.events.find((item) => (stage.statuses as readonly string[]).includes(item.status))
+  return event?.at ?? null
 }
 
-export type TrackedOrder = {
-  record: OrderRecord
-  stage: number
-  cancelled: boolean
+export const statusLabel: Record<OrderStatus, string> = {
+  PLACED: 'Order placed',
+  CONFIRMED: 'Confirmed',
+  PACKED: 'Packed',
+  SHIPPED: 'Shipped',
+  OUT_FOR_DELIVERY: 'Out for delivery',
+  DELIVERED: 'Delivered',
+  CANCELLED: 'Cancelled',
+  RETURNED: 'Returned',
 }
 
-function parseDate(value: string) {
-  const parsed = Date.parse(value)
-  return Number.isNaN(parsed) ? Date.now() - 86400000 : parsed
+export const paymentLabel: Record<ApiOrder['paymentMethod'], string> = { UPI: 'UPI', CARD: 'Card', NETBANKING: 'Net banking', COD: 'Cash on delivery' }
+
+export const formatDateTime = (value: string | number) =>
+  new Date(value).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit' })
+
+export const formatDay = (value: string | number) => new Date(value).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })
+
+/** Opens the printable invoice (needs the customer's login). */
+export async function openInvoice(code: string) {
+  const response = await fetch(`/api/v1/orders/${encodeURIComponent(code)}/invoice`, { credentials: 'include', headers: authHeader() })
+  if (!response.ok) throw new Error('Could not load the invoice')
+  const blob = new Blob([await response.text()], { type: 'text/html' })
+  window.open(URL.createObjectURL(blob), '_blank', 'noopener')
 }
 
-function recordFromSeed(order: StoreOrder): OrderRecord {
-  return {
-    id: order.id,
-    placedAt: parseDate(order.date),
-    customer: order.customer,
-    phone: '',
-    email: '',
-    address: 'Address on file',
-    city: '',
-    state: '',
-    pin: '',
-    lines: order.items.split(', ').map((name) => ({
-      name,
-      slug: '',
-      size: '250g' as PackSize,
-      quantity: 1,
-      unitPrice: Math.round(order.amount / order.items.split(', ').length),
-      image: null,
-      art: 'mix' as ArtTone,
-    })),
-    subtotal: order.amount,
-    discount: 0,
-    shipping: 0,
-    total: order.amount,
-    coupon: null,
-    payment: { method: 'Paid online', detail: '', paid: true, ref: `TXN${order.id.slice(4)}` },
-  }
-}
-
-export function trackOrder(id: string): TrackedOrder | undefined {
-  const record = findOrderRecord(id)
-  if (record) return { record, stage: stageIndex(record.placedAt), cancelled: false }
-  const seed = seedOrders.find((order) => order.id.toUpperCase() === id.trim().toUpperCase())
-  if (seed) {
-    return {
-      record: recordFromSeed(seed),
-      stage: statusStage[seed.status],
-      cancelled: seed.status === 'Cancelled',
-    }
-  }
-  return undefined
-}
-
-export function formatDateTime(timestamp: number) {
-  return new Date(timestamp).toLocaleString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
-}
-
-export function formatDay(timestamp: number) {
-  return new Date(timestamp).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })
-}
-
-export function estimatedDelivery(record: OrderRecord) {
-  const eta = record.placedAt + 3 * 86400000
-  return formatDay(eta)
+function authHeader(): Record<string, string> {
+  const token = getAccessToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
 }

@@ -1,19 +1,21 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { createAccount, findAccountByEmail, findAccountById, peopleByIds, setRole, updateLogin } from '../../lib/account.js'
 import { audit } from '../../lib/audit.js'
-import { hashPassword } from '../../lib/auth.js'
+import { hashPassword, revokeAllRefreshTokens } from '../../lib/auth.js'
+import { from, count, maybe, rows, rpc, toHttpError, type Row } from '../../lib/db.js'
 import { badRequest, conflict, notFound } from '../../lib/errors.js'
-import { changeStatus, orderInclude, refundOrder } from '../../lib/orders.js'
-import { prisma } from '../../lib/prisma.js'
+import { changeStatus, loadOrder, refundOrder } from '../../lib/orders.js'
 import { serializeOrder } from '../../lib/serializers.js'
 import { getSettings, saveSettings } from '../../lib/settings.js'
+import { ORDER_SELECT } from '../../lib/types.js'
 import { actor, adminOnly } from '../../middleware/auth.js'
 import { renderInvoice } from '../orders.js'
-import type { Prisma } from '@prisma/client'
 
 export const adminOpsRouter = Router()
 
 const statusEnum = z.enum(['PLACED', 'CONFIRMED', 'PACKED', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED', 'RETURNED'])
+const like = (value: string) => value.replace(/[%,()*\\]/g, ' ')
 
 adminOpsRouter.get('/orders', async (req, res) => {
   const q = z
@@ -27,102 +29,110 @@ adminOpsRouter.get('/orders', async (req, res) => {
       pageSize: z.coerce.number().int().min(1).max(100).default(20),
     })
     .parse(req.query)
-  const where: Prisma.OrderWhereInput = { status: q.status, paymentStatus: q.paymentStatus }
-  if (q.from || q.to) where.createdAt = { gte: q.from, lte: q.to }
+  let request = from('Order').select(ORDER_SELECT, { count: 'exact' }).order('createdAt', { ascending: false }).range((q.page - 1) * q.pageSize, q.page * q.pageSize - 1)
+  if (q.status) request = request.eq('status', q.status)
+  if (q.paymentStatus) request = request.eq('paymentStatus', q.paymentStatus)
+  if (q.from) request = request.gte('createdAt', q.from.toISOString())
+  if (q.to) request = request.lte('createdAt', q.to.toISOString())
   if (q.q) {
     const num = Number(q.q.replace(/\D/g, ''))
-    where.OR = [
-      { customerName: { contains: q.q, mode: 'insensitive' } },
-      { email: { contains: q.q, mode: 'insensitive' } },
-      { phone: { contains: q.q } },
-      ...(Number.isFinite(num) && num > 0 ? [{ number: num }] : []),
-    ]
+    const clauses = [`customerName.ilike.%${like(q.q)}%`, `email.ilike.%${like(q.q)}%`, `phone.ilike.%${like(q.q)}%`]
+    if (Number.isFinite(num) && num > 0) clauses.push(`number.eq.${num}`)
+    request = request.or(clauses.join(','))
   }
-  const [rows, total, counts] = await Promise.all([
-    prisma.order.findMany({ where, include: orderInclude, orderBy: { createdAt: 'desc' }, skip: (q.page - 1) * q.pageSize, take: q.pageSize }),
-    prisma.order.count({ where }),
-    prisma.order.groupBy({ by: ['status'], _count: true }),
-  ])
+  const { data, error, count: total } = await request
+  if (error) throw toHttpError(error)
+  const statusCounts = await rpc<Record<string, number>>('order_status_counts')
   res.json({
-    items: rows.map(serializeOrder),
-    total,
+    items: ((data ?? []) as Row[]).map(serializeOrder),
+    total: total ?? 0,
     page: q.page,
-    pages: Math.max(1, Math.ceil(total / q.pageSize)),
-    statusCounts: Object.fromEntries(counts.map((row) => [row.status, row._count])),
+    pages: Math.max(1, Math.ceil((total ?? 0) / q.pageSize)),
+    statusCounts,
   })
 })
 
 adminOpsRouter.get('/orders/:id', async (req, res) => {
-  const order = await prisma.order.findUnique({ where: { id: String(req.params.id) }, include: { ...orderInclude, payments: true, user: { select: { id: true, name: true, email: true } } } })
+  const order = await maybe<Row>(from('Order').select(ORDER_SELECT).eq('id', String(req.params.id)).maybeSingle())
   if (!order) throw notFound('Order')
-  res.json({ order: { ...serializeOrder(order), payments: order.payments, customerAccount: order.user } })
+  // Payments live in their own schema, so they are read separately (PostgREST cannot embed across schemas).
+  order.payments = await rows<Row>(from('Payment').select('*').eq('orderId', order.id).order('createdAt'))
+  const account = order.userId ? await findAccountById(String(order.userId)) : null
+  res.json({ order: { ...serializeOrder(order), payments: order.payments, customerAccount: account ? { id: account.id, name: account.name, email: account.email } : null } })
+})
+
+// Gateway webhook log (admin only): what the payment provider told us and how we handled it.
+adminOpsRouter.get('/payments/webhooks', adminOnly, async (req, res) => {
+  const status = typeof req.query.status === 'string' ? req.query.status : null
+  let request = from('WebhookEvent').select('id, provider, eventId, eventType, providerOrderId, providerPaymentId, status, error, receivedAt, processedAt').order('receivedAt', { ascending: false }).limit(100)
+  if (status) request = request.eq('status', status)
+  res.json({ items: await rows<Row>(request) })
 })
 
 adminOpsRouter.get('/orders/:id/invoice', async (req, res) => {
-  const order = await prisma.order.findUnique({ where: { id: String(req.params.id) }, include: orderInclude })
+  const order = await maybe<Row>(from('Order').select(ORDER_SELECT).eq('id', String(req.params.id)).maybeSingle())
   if (!order) throw notFound('Order')
   res.type('html').send(renderInvoice(order))
 })
 
 adminOpsRouter.patch('/orders/:id/status', async (req, res) => {
+  const id = String(req.params.id)
   const data = z
     .object({ status: statusEnum, note: z.string().trim().max(300).optional(), carrier: z.string().trim().max(60).optional(), trackingNumber: z.string().trim().max(60).optional() })
     .parse(req.body)
   if (data.status === 'SHIPPED' && !data.trackingNumber) {
-    const existing = await prisma.order.findUnique({ where: { id: String(req.params.id) } })
+    const existing = await maybe<{ trackingNumber: string | null }>(from('Order').select('trackingNumber').eq('id', id).maybeSingle())
     if (!existing?.trackingNumber) throw badRequest('Add a tracking number when marking an order as shipped')
   }
-  await changeStatus(String(req.params.id), data.status, data)
-  await audit(actor(req).id, `order.status.${data.status.toLowerCase()}`, 'Order', String(req.params.id), data)
-  const order = await prisma.order.findUniqueOrThrow({ where: { id: String(req.params.id) }, include: orderInclude })
-  res.json({ order: serializeOrder(order) })
+  await changeStatus(id, data.status, data)
+  await audit(actor(req).id, `order.status.${data.status.toLowerCase()}`, 'Order', id, data)
+  res.json({ order: serializeOrder(await loadOrder(id)) })
 })
 
 adminOpsRouter.post('/orders/:id/refund', adminOnly, async (req, res) => {
-  await refundOrder(String(req.params.id))
-  await audit(actor(req).id, 'order.refund', 'Order', String(req.params.id))
-  res.json({ order: serializeOrder(await prisma.order.findUniqueOrThrow({ where: { id: String(req.params.id) }, include: orderInclude })) })
+  const id = String(req.params.id)
+  await refundOrder(id)
+  await audit(actor(req).id, 'order.refund', 'Order', id)
+  res.json({ order: serializeOrder(await loadOrder(id)) })
 })
 
 // ---- Customers ----
 adminOpsRouter.get('/customers', async (req, res) => {
   const q = z.object({ q: z.string().trim().optional(), page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20) }).parse(req.query)
-  const where: Prisma.UserWhereInput = {
-    role: 'CUSTOMER',
-    ...(q.q ? { OR: [{ name: { contains: q.q, mode: 'insensitive' } }, { email: { contains: q.q, mode: 'insensitive' } }] } : {}),
-  }
-  const [users, total] = await Promise.all([
-    prisma.user.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (q.page - 1) * q.pageSize, take: q.pageSize }),
-    prisma.user.count({ where }),
-  ])
-  const spend = await prisma.order.groupBy({
-    by: ['userId'],
-    where: { userId: { in: users.map((user) => user.id) }, status: { notIn: ['CANCELLED', 'RETURNED'] } },
-    _sum: { total: true },
-    _count: true,
-  })
+  let request = from('Person').select('id, name, email, phone, isBlocked, createdAt', { count: 'exact' }).eq('role', 'CUSTOMER').order('createdAt', { ascending: false }).range((q.page - 1) * q.pageSize, q.page * q.pageSize - 1)
+  if (q.q) request = request.or(`name.ilike.%${like(q.q)}%,email.ilike.%${like(q.q)}%`)
+  const { data, error, count: total } = await request
+  if (error) throw toHttpError(error)
+  const users = (data ?? []) as Row[]
+  const stats = users.length ? await rpc<{ userId: string; orders: number; spent: number }[]>('customer_stats', { p_user_ids: users.map((user) => user.id) }) : []
   res.json({
     items: users.map((user) => {
-      const row = spend.find((item) => item.userId === user.id)
-      return { id: user.id, name: user.name, email: user.email, phone: user.phone, isBlocked: user.isBlocked, createdAt: user.createdAt, orders: row?._count ?? 0, spent: row?._sum.total ?? 0 }
+      const row = stats.find((item) => item.userId === user.id)
+      return { ...user, orders: row?.orders ?? 0, spent: row?.spent ?? 0 }
     }),
-    total,
+    total: total ?? 0,
     page: q.page,
-    pages: Math.max(1, Math.ceil(total / q.pageSize)),
+    pages: Math.max(1, Math.ceil((total ?? 0) / q.pageSize)),
   })
 })
 
 adminOpsRouter.get('/customers/:id', async (req, res) => {
-  const user = await prisma.user.findUnique({ where: { id: String(req.params.id) }, include: { addresses: true, orders: { include: orderInclude, orderBy: { createdAt: 'desc' }, take: 50 } } })
+  const id = String(req.params.id)
+  const user = await maybe<Row>(from('Person').select('id, name, email, phone, isBlocked, createdAt, role').eq('id', id).eq('role', 'CUSTOMER').maybeSingle())
   if (!user) throw notFound('Customer')
-  res.json({ customer: { id: user.id, name: user.name, email: user.email, phone: user.phone, isBlocked: user.isBlocked, createdAt: user.createdAt, addresses: user.addresses, orders: user.orders.map(serializeOrder) } })
+  const [addresses, orders] = await Promise.all([
+    rows(from('Address').select('*').eq('userId', id).order('isDefault', { ascending: false })),
+    rows(from('Order').select(ORDER_SELECT).eq('userId', id).order('createdAt', { ascending: false }).limit(50)),
+  ])
+  res.json({ customer: { ...user, addresses, orders: orders.map(serializeOrder) } })
 })
 
 adminOpsRouter.patch('/customers/:id', adminOnly, async (req, res) => {
   const data = z.object({ isBlocked: z.boolean() }).parse(req.body)
-  const user = await prisma.user.update({ where: { id: String(req.params.id) }, data })
-  if (data.isBlocked) await prisma.refreshToken.deleteMany({ where: { userId: user.id } })
-  await audit(actor(req).id, data.isBlocked ? 'customer.block' : 'customer.unblock', 'User', user.id)
+  const id = String(req.params.id)
+  await updateLogin(id, data)
+  if (data.isBlocked) await revokeAllRefreshTokens(id)
+  await audit(actor(req).id, data.isBlocked ? 'customer.block' : 'customer.unblock', 'Login', id)
   res.json({ ok: true })
 })
 
@@ -151,45 +161,47 @@ adminOpsRouter.put('/settings', adminOnly, async (req, res) => {
 
 // ---- Staff accounts and audit trail ----
 adminOpsRouter.get('/staff', adminOnly, async (_req, res) => {
-  const items = await prisma.user.findMany({ where: { role: { in: ['ADMIN', 'STAFF'] } }, select: { id: true, name: true, email: true, role: true, isBlocked: true, createdAt: true }, orderBy: { createdAt: 'asc' } })
-  res.json({ items })
+  res.json({ items: await rows(from('Person').select('id, name, email, role, isBlocked, createdAt').in('role', ['ADMIN', 'STAFF']).order('createdAt')) })
 })
 
 adminOpsRouter.post('/staff', adminOnly, async (req, res) => {
   const data = z
     .object({ name: z.string().trim().min(2).max(80), email: z.string().trim().toLowerCase().email(), password: z.string().min(8).max(100), role: z.enum(['STAFF', 'ADMIN']).default('STAFF') })
     .parse(req.body)
-  if (await prisma.user.findUnique({ where: { email: data.email } })) throw conflict('An account with this email already exists')
-  const user = await prisma.user.create({ data: { name: data.name, email: data.email, role: data.role, passwordHash: await hashPassword(data.password) } })
-  await audit(actor(req).id, 'staff.create', 'User', user.id, { role: data.role })
+  if (await findAccountByEmail(data.email)) throw conflict('An account with this email already exists')
+  const user = await createAccount({ name: data.name, email: data.email, role: data.role, passwordHash: await hashPassword(data.password) })
+  await audit(actor(req).id, 'staff.create', 'Login', user.id, { role: data.role })
   res.status(201).json({ user: { id: user.id, name: user.name, email: user.email, role: user.role } })
 })
 
 adminOpsRouter.patch('/staff/:id', adminOnly, async (req, res) => {
   const data = z.object({ role: z.enum(['CUSTOMER', 'STAFF', 'ADMIN']).optional(), isBlocked: z.boolean().optional() }).parse(req.body)
-  if (String(req.params.id) === actor(req).id) throw badRequest('You cannot change your own role or access')
-  const user = await prisma.user.update({ where: { id: String(req.params.id) }, data })
-  if (data.isBlocked || data.role === 'CUSTOMER') await prisma.refreshToken.deleteMany({ where: { userId: user.id } })
-  await audit(actor(req).id, 'staff.update', 'User', user.id, data)
+  const id = String(req.params.id)
+  if (id === actor(req).id) throw badRequest('You cannot change your own role or access')
+  if (data.role) await setRole(id, data.role)
+  if (data.isBlocked !== undefined) await updateLogin(id, { isBlocked: data.isBlocked })
+  if (data.isBlocked || data.role === 'CUSTOMER') await revokeAllRefreshTokens(id)
+  await audit(actor(req).id, 'staff.update', 'Login', id, data)
   res.json({ ok: true })
 })
 
 adminOpsRouter.get('/audit', adminOnly, async (req, res) => {
   const q = z.object({ entity: z.string().optional(), page: z.coerce.number().int().min(1).default(1) }).parse(req.query)
-  const items = await prisma.auditLog.findMany({ where: { entity: q.entity }, include: { actor: { select: { name: true, email: true } } }, orderBy: { createdAt: 'desc' }, skip: (q.page - 1) * 50, take: 50 })
-  res.json({ items })
+  let request = from('AuditLog').select('*').order('createdAt', { ascending: false }).range((q.page - 1) * 50, q.page * 50 - 1)
+  if (q.entity) request = request.eq('entity', q.entity)
+  const items = await rows<Row & { actorId: string | null }>(request)
+  const actors = await peopleByIds([...new Set(items.map((item) => item.actorId).filter(Boolean))] as string[])
+  res.json({ items: items.map((item) => ({ ...item, actor: item.actorId ? actors.get(item.actorId) ?? null : null })) })
 })
 
-// ---- Analytics (revenue figures are admin-only; staff see operational counts via /admin/summary) ----
-const REVENUE = { status: { notIn: ['CANCELLED', 'RETURNED'] as ('CANCELLED' | 'RETURNED')[] }, paymentStatus: { in: ['PAID', 'PENDING'] as ('PAID' | 'PENDING')[] } }
-
+// ---- Summary (staff-safe counts) and analytics (admin only: money figures) ----
 adminOpsRouter.get('/summary', async (_req, res) => {
   const settings = await getSettings()
   const [pending, toPack, toShip, variants] = await Promise.all([
-    prisma.order.count({ where: { status: { in: ['PLACED', 'CONFIRMED'] } } }),
-    prisma.order.count({ where: { status: 'CONFIRMED' } }),
-    prisma.order.count({ where: { status: 'PACKED' } }),
-    prisma.productVariant.findMany({ where: { isActive: true, product: { isActive: true } }, select: { stock: true, lowStockAt: true } }),
+    count(from('Order').select('id', { count: 'exact', head: true }).in('status', ['PLACED', 'CONFIRMED'])),
+    count(from('Order').select('id', { count: 'exact', head: true }).eq('status', 'CONFIRMED')),
+    count(from('Order').select('id', { count: 'exact', head: true }).eq('status', 'PACKED')),
+    rows<{ stock: number; lowStockAt: number }>(from('ProductVariant').select('stock, lowStockAt, product:Product!inner(isActive)').eq('isActive', true).eq('product.isActive', true)),
   ])
   res.json({
     ordersNeedingAction: pending,
@@ -202,53 +214,14 @@ adminOpsRouter.get('/summary', async (_req, res) => {
 
 adminOpsRouter.get('/analytics', adminOnly, async (req, res) => {
   const days = z.coerce.number().int().min(1).max(365).default(30).parse(req.query.days)
-  const since = new Date(Date.now() - days * 86400000)
-  since.setHours(0, 0, 0, 0)
-  const startOfToday = new Date()
-  startOfToday.setHours(0, 0, 0, 0)
-
-  const [period, today, customersNew, statusCounts, series, topProducts, lowStock, coupons, byCategory] = await Promise.all([
-    prisma.order.aggregate({ where: { ...REVENUE, createdAt: { gte: since } }, _sum: { total: true, discount: true }, _count: true, _avg: { total: true } }),
-    prisma.order.aggregate({ where: { ...REVENUE, createdAt: { gte: startOfToday } }, _sum: { total: true }, _count: true }),
-    prisma.user.count({ where: { role: 'CUSTOMER', createdAt: { gte: since } } }),
-    prisma.order.groupBy({ by: ['status'], where: { createdAt: { gte: since } }, _count: true }),
-    prisma.$queryRaw<{ day: Date; revenue: bigint; orders: bigint }[]>`
-      SELECT date_trunc('day', "createdAt") AS day, COALESCE(SUM("total"),0) AS revenue, COUNT(*) AS orders
-      FROM "Order"
-      WHERE "createdAt" >= ${since} AND "status" NOT IN ('CANCELLED','RETURNED') AND "paymentStatus" IN ('PAID','PENDING')
-      GROUP BY 1 ORDER BY 1`,
-    prisma.$queryRaw<{ name: string; units: bigint; revenue: bigint }[]>`
-      SELECT oi."name" AS name, SUM(oi."quantity") AS units, SUM(oi."quantity" * oi."unitPrice") AS revenue
-      FROM "OrderItem" oi JOIN "Order" o ON o.id = oi."orderId"
-      WHERE o."createdAt" >= ${since} AND o."status" NOT IN ('CANCELLED','RETURNED')
-      GROUP BY oi."name" ORDER BY revenue DESC LIMIT 8`,
-    prisma.productVariant.findMany({ where: { isActive: true, stock: { lte: 10 }, product: { isActive: true } }, include: { product: { select: { name: true } } }, orderBy: { stock: 'asc' }, take: 10 }),
-    prisma.coupon.findMany({ where: { usedCount: { gt: 0 } }, orderBy: { usedCount: 'desc' }, take: 5, select: { code: true, usedCount: true } }),
-    prisma.$queryRaw<{ category: string; revenue: bigint }[]>`
-      SELECT p."categoryId" AS category, SUM(oi."quantity" * oi."unitPrice") AS revenue
-      FROM "OrderItem" oi JOIN "Order" o ON o.id = oi."orderId" JOIN "Product" p ON p.id = oi."productId"
-      WHERE o."createdAt" >= ${since} AND o."status" NOT IN ('CANCELLED','RETURNED')
-      GROUP BY 1 ORDER BY revenue DESC`,
+  const [stats, lowStock, coupons] = await Promise.all([
+    rpc<Row>('admin_analytics', { p_days: days }),
+    rows<Row>(from('ProductVariant').select('id, size, stock, product:Product!inner(name, isActive)').eq('isActive', true).eq('product.isActive', true).lte('stock', 10).order('stock').limit(10)),
+    rows(from('Coupon').select('code, usedCount').gt('usedCount', 0).order('usedCount', { ascending: false }).limit(5)),
   ])
-
-  const byDay = new Map(series.map((row) => [row.day.toISOString().slice(0, 10), { revenue: Number(row.revenue), orders: Number(row.orders) }]))
-  const daily = Array.from({ length: days }, (_, index) => {
-    const day = new Date(since.getTime() + index * 86400000).toISOString().slice(0, 10)
-    return { day, ...(byDay.get(day) ?? { revenue: 0, orders: 0 }) }
-  })
-
   res.json({
     rangeDays: days,
-    revenue: period._sum.total ?? 0,
-    orders: period._count,
-    averageOrderValue: Math.round(period._avg.total ?? 0),
-    couponDiscountGiven: period._sum.discount ?? 0,
-    today: { revenue: today._sum.total ?? 0, orders: today._count },
-    newCustomers: customersNew,
-    ordersByStatus: Object.fromEntries(statusCounts.map((row) => [row.status, row._count])),
-    daily,
-    topProducts: topProducts.map((row) => ({ name: row.name, units: Number(row.units), revenue: Number(row.revenue) })),
-    revenueByCategory: byCategory.map((row) => ({ category: row.category, revenue: Number(row.revenue) })),
+    ...stats,
     lowStock: lowStock.map((variant) => ({ variantId: variant.id, product: variant.product.name, size: variant.size, stock: variant.stock })),
     topCoupons: coupons,
   })

@@ -23,10 +23,10 @@ export function ProductArt({
   className = '',
 }: {
   name: string
-  art: ArtTone
+  art: string
   className?: string
 }) {
-  const palette = palettes[art]
+  const palette = palettes[art as ArtTone] ?? palettes.mix
   const bits = [
     [78, 118],
     [108, 108],

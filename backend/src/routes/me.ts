@@ -1,16 +1,19 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { notFound } from '../lib/errors.js'
-import { prisma } from '../lib/prisma.js'
+import { findAccountById, updateProfile } from '../lib/account.js'
+import { from, count, db, exec, maybe, one, rows, rpc } from '../lib/db.js'
+import { badRequest, notFound } from '../lib/errors.js'
+import { imageUpload, storeImage } from '../lib/storage.js'
 import { actor, requireAuth } from '../middleware/auth.js'
 import { publicUser } from './auth.js'
+import { walletRouter } from './wallet.js'
 
 export const meRouter = Router()
 meRouter.use(requireAuth)
 
 meRouter.get('/', async (req, res) => {
-  const user = await prisma.user.findUnique({ where: { id: actor(req).id } })
-  if (!user) throw notFound('User')
+  const user = await findAccountById(actor(req).id)
+  if (!user) throw notFound('Account')
   res.json({ user: publicUser(user) })
 })
 
@@ -19,10 +22,18 @@ meRouter.patch('/', async (req, res) => {
     .object({
       name: z.string().trim().min(2).max(80).optional(),
       phone: z.string().regex(/^[6-9]\d{9}$/).nullable().optional(),
+      avatarUrl: z.null().optional(),
     })
     .parse(req.body)
-  const user = await prisma.user.update({ where: { id: actor(req).id }, data })
+  const user = Object.keys(data).length ? await updateProfile(actor(req).id, data) : await findAccountById(actor(req).id)
+  if (!user) throw notFound('Account')
   res.json({ user: publicUser(user) })
+})
+
+meRouter.post('/avatar', imageUpload.single('image'), async (req, res) => {
+  if (!req.file) throw badRequest('Attach an image in the "image" field')
+  const user = await updateProfile(actor(req).id, { avatarUrl: await storeImage(req.file, 'profile') })
+  res.status(201).json({ user: publicUser(user) })
 })
 
 const addressSchema = z.object({
@@ -32,64 +43,70 @@ const addressSchema = z.object({
   city: z.string().trim().min(2).max(80),
   state: z.string().trim().min(2).max(60),
   pin: z.string().regex(/^\d{6}$/, 'Enter a 6-digit PIN code'),
+  landmark: z.string().trim().max(120).nullish().transform((value) => value || null),
+  label: z.enum(['HOME', 'WORK', 'OTHER']).default('HOME'),
   isDefault: z.boolean().default(false),
 })
 
 meRouter.get('/addresses', async (req, res) => {
-  res.json({
-    items: await prisma.address.findMany({ where: { userId: actor(req).id }, orderBy: [{ isDefault: 'desc' }, { id: 'asc' }] }),
-  })
+  res.json({ items: await rows(from('Address').select('*').eq('userId', actor(req).id).order('isDefault', { ascending: false }).order('id')) })
 })
 
 meRouter.post('/addresses', async (req, res) => {
   const data = addressSchema.parse(req.body)
   const userId = actor(req).id
-  const first = (await prisma.address.count({ where: { userId } })) === 0
-  const address = await prisma.$transaction(async (tx) => {
-    const makeDefault = data.isDefault || first
-    if (makeDefault) await tx.address.updateMany({ where: { userId }, data: { isDefault: false } })
-    return tx.address.create({ data: { ...data, isDefault: makeDefault, userId } })
-  })
-  res.status(201).json(address)
+  const first = (await count(from('Address').select('id', { count: 'exact', head: true }).eq('userId', userId))) === 0
+  const { isDefault, ...fields } = data
+  const address = await one<{ id: string }>(from('Address').insert({ ...fields, isDefault: false, userId }).select().single())
+  if (isDefault || first) await rpc('set_default_address', { p_user: userId, p_id: address.id })
+  res.status(201).json(await one(from('Address').select('*').eq('id', address.id).single()))
 })
 
 meRouter.put('/addresses/:id', async (req, res) => {
   const data = addressSchema.parse(req.body)
   const userId = actor(req).id
-  const existing = await prisma.address.findFirst({ where: { id: String(req.params.id), userId } })
+  const existing = await maybe<{ id: string }>(from('Address').select('id').eq('id', String(req.params.id)).eq('userId', userId).maybeSingle())
   if (!existing) throw notFound('Address')
-  const address = await prisma.$transaction(async (tx) => {
-    if (data.isDefault) await tx.address.updateMany({ where: { userId }, data: { isDefault: false } })
-    return tx.address.update({ where: { id: existing.id }, data })
-  })
-  res.json(address)
+  const { isDefault, ...fields } = data
+  await exec(from('Address').update(fields).eq('id', existing.id))
+  if (isDefault) await rpc('set_default_address', { p_user: userId, p_id: existing.id })
+  res.json(await one(from('Address').select('*').eq('id', existing.id).single()))
 })
 
-meRouter.delete('/addresses/:id', async (req, res) => {
-  const result = await prisma.address.deleteMany({ where: { id: String(req.params.id), userId: actor(req).id } })
-  if (result.count === 0) throw notFound('Address')
+meRouter.post('/addresses/:id/default', async (req, res) => {
+  await rpc('set_default_address', { p_user: actor(req).id, p_id: String(req.params.id) })
   res.status(204).end()
 })
 
+meRouter.delete('/addresses/:id', async (req, res) => {
+  const userId = actor(req).id
+  const deleted = await rows<{ isDefault: boolean }>(from('Address').delete().eq('id', String(req.params.id)).eq('userId', userId).select('isDefault'))
+  if (deleted.length === 0) throw notFound('Address')
+  if (deleted[0].isDefault) {
+    // Promote another address so checkout always has a default.
+    const next = await maybe<{ id: string }>(from('Address').select('id').eq('userId', userId).order('id').limit(1).maybeSingle())
+    if (next) await rpc('set_default_address', { p_user: userId, p_id: next.id })
+  }
+  res.status(204).end()
+})
+
+meRouter.use(walletRouter)
+
 // Wishlist
 meRouter.get('/wishlist', async (req, res) => {
-  const rows = await prisma.wishlistItem.findMany({ where: { userId: actor(req).id }, orderBy: { createdAt: 'desc' } })
-  res.json({ productIds: rows.map((row) => row.productId) })
+  const items = await rows<{ productId: string }>(from('WishlistItem').select('productId').eq('userId', actor(req).id).order('createdAt', { ascending: false }))
+  res.json({ productIds: items.map((row) => row.productId) })
 })
 
 meRouter.put('/wishlist/:productId', async (req, res) => {
-  const product = await prisma.product.findUnique({ where: { id: String(req.params.productId) } })
+  const product = await maybe(from('Product').select('id').eq('id', String(req.params.productId)).maybeSingle())
   if (!product) throw notFound('Product')
-  await prisma.wishlistItem.upsert({
-    where: { userId_productId: { userId: actor(req).id, productId: product.id } },
-    update: {},
-    create: { userId: actor(req).id, productId: product.id },
-  })
+  await exec(from('WishlistItem').upsert({ userId: actor(req).id, productId: String(req.params.productId) }, { onConflict: 'userId,productId', ignoreDuplicates: true }))
   res.status(204).end()
 })
 
 meRouter.delete('/wishlist/:productId', async (req, res) => {
-  await prisma.wishlistItem.deleteMany({ where: { userId: actor(req).id, productId: String(req.params.productId) } })
+  await exec(from('WishlistItem').delete().eq('userId', actor(req).id).eq('productId', String(req.params.productId)))
   res.status(204).end()
 })
 
@@ -99,14 +116,17 @@ const cartSchema = z.object({
 })
 
 async function loadCart(userId: string) {
-  const rows = await prisma.cartItem.findMany({ where: { userId }, include: { variant: { include: { product: true } } } })
-  return rows.map((row) => ({
-    variantId: row.variantId,
-    quantity: Math.min(row.quantity, row.variant.stock),
-    productId: row.variant.productId,
-    name: row.variant.product.name,
-    size: row.variant.size,
-  }))
+  // PostgREST cannot embed across schemas (sales -> catalog), so read the variants separately.
+  const items = await rows<{ variantId: string; quantity: number }>(from('CartItem').select('variantId, quantity').eq('userId', userId))
+  if (items.length === 0) return []
+  const variants = await rows<{ id: string; productId: string; size: string; stock: number; product: { name: string } }>(
+    from('ProductVariant').select('id, productId, size, stock, product:Product(name)').in('id', items.map((item) => item.variantId)),
+  )
+  const byId = new Map(variants.map((variant) => [variant.id, variant]))
+  return items.flatMap((row) => {
+    const variant = byId.get(row.variantId)
+    return variant ? [{ variantId: row.variantId, quantity: Math.min(row.quantity, variant.stock), productId: variant.productId, name: variant.product.name, size: variant.size }] : []
+  })
 }
 
 meRouter.get('/cart', async (req, res) => res.json({ items: await loadCart(actor(req).id) }))
@@ -114,14 +134,13 @@ meRouter.get('/cart', async (req, res) => res.json({ items: await loadCart(actor
 meRouter.put('/cart', async (req, res) => {
   const { items } = cartSchema.parse(req.body)
   const userId = actor(req).id
-  const known = await prisma.productVariant.findMany({ where: { id: { in: items.map((item) => item.variantId) }, isActive: true }, select: { id: true } })
+  const known = items.length
+    ? await rows<{ id: string }>(from('ProductVariant').select('id').in('id', items.map((item) => item.variantId)).eq('isActive', true))
+    : []
   const valid = new Set(known.map((variant) => variant.id))
-  await prisma.$transaction([
-    prisma.cartItem.deleteMany({ where: { userId } }),
-    prisma.cartItem.createMany({
-      data: items.filter((item) => valid.has(item.variantId)).map((item) => ({ userId, variantId: item.variantId, quantity: item.quantity })),
-      skipDuplicates: true,
-    }),
-  ])
+  const unique = new Map<string, number>()
+  for (const item of items) if (valid.has(item.variantId)) unique.set(item.variantId, Math.min(99, (unique.get(item.variantId) ?? 0) + item.quantity))
+  await exec(from('CartItem').delete().eq('userId', userId))
+  if (unique.size) await exec(from('CartItem').insert([...unique].map(([variantId, quantity]) => ({ userId, variantId, quantity }))))
   res.json({ items: await loadCart(userId) })
 })

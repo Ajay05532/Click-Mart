@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { categories } from '../../data/products.ts'
+import { useCategories } from '../../lib/catalog.ts'
 import { storeAddress, storeEmail, storePhone, storePhoneTel } from '../../lib/store.ts'
 import { MailIcon, PhoneIcon, PinIcon } from '../icons.tsx'
 import { Container } from './Container.tsx'
@@ -29,6 +29,7 @@ const help = [
 const payments = ['UPI', 'Cards', 'Netbanking', 'COD']
 
 export function Footer() {
+  const categories = useCategories().data ?? []
   const [email, setEmail] = useState('')
   const [done, setDone] = useState(false)
 
@@ -162,9 +163,9 @@ export function Footer() {
                 </li>
               ))}
             </ul>
-            <Link to="/admin" className="hover:text-white">
+            <a href={import.meta.env.VITE_ADMIN_URL ?? 'http://localhost:5175'} className="hover:text-white">
               Seller dashboard
-            </Link>
+            </a>
           </Container>
         </div>
       </section>
