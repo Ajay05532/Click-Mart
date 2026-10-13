@@ -14,7 +14,6 @@
 --   2. Project Settings -> Data API -> Exposed schemas: add
 --      account, catalog, marketing, sales, payment, ops
 --      (public can stay). Save. The SQL also tries to set this for you.
---   3. From backend/:  npm run db:seed
 --
 -- HOW THE STORE IS ORGANISED
 --   account    login, customer / staff / admin details, sessions, addresses
@@ -1436,15 +1435,6 @@ BEGIN
   WHERE "id" = p_coupon_id;
 END $$;
 
--- Seed helper: continue order numbers after the demo orders.
-CREATE OR REPLACE FUNCTION bump_order_number(p_min INT)
-RETURNS void LANGUAGE plpgsql
-SET search_path = account, catalog, marketing, sales, payment, ops, public
-AS $$
-BEGIN
-  PERFORM setval(pg_get_serial_sequence('sales."Order"', 'number'), GREATEST(p_min, (SELECT COALESCE(max("number"), p_min) FROM sales."Order")));
-END $$;
-
 -- A previous run created these in account (search_path listed account first).
 -- Drop them so rpc() cannot hit a second copy. Triggers already point at public.set_updated_at.
 DO $$
@@ -1610,12 +1600,8 @@ COMMENT ON TABLE payment."Payment" IS 'One attempt to collect the order total.';
 
 -- ============================================================================
 -- 14. Starter data
--- Store settings and the three launch coupons. Products, categories, banners and the
--- admin user are loaded by `npm run db:seed`.
+-- Store settings only. Products, categories, banners, coupons and admins are added from the admin app.
 -- ============================================================================
-
-INSERT INTO catalog."Brand" ("id", "name", "slug") VALUES ('brand_clickmart', 'ClickMart', 'clickmart')
-ON CONFLICT ("id") DO NOTHING;
 
 INSERT INTO ops."Setting" ("key", "value") VALUES
   ('storeName',             '"ClickMart"'),
@@ -1628,12 +1614,6 @@ INSERT INTO ops."Setting" ("key", "value") VALUES
   ('codMaxOrder',           '5000'),
   ('lowStockDefault',       '10')
 ON CONFLICT ("key") DO NOTHING;
-
-INSERT INTO marketing."Coupon" ("code", "label", "type", "value") VALUES
-  ('DRY15',     '15% off all dry fruits', 'PERCENT',       15),
-  ('WELCOME10', '10% off your order',     'PERCENT',       10),
-  ('FREESHIP',  'Free shipping',          'FREE_SHIPPING',  0)
-ON CONFLICT ("code") DO NOTHING;
 
 -- ============================================================================
 -- 15. Image storage

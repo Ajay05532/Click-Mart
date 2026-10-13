@@ -1,0 +1,41 @@
+# API service. In an existing Render service, set the same fields by hand:
+#   Root Directory: backend
+#   Build Command:  npm install
+#   Start Command:  npm start
+services:
+  - type: web
+    name: clickmart-api
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: PASSWORD_PEPPER
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: STORE_URL
+        sync: false
+      - key: ADMIN_URL
+        sync: false
+      - key: PAYMENT_WEBHOOK_SECRET
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: COOKIE_SAMESITE
+        value: none
+      - key: PAYMENT_PROVIDER
+        value: razorpay

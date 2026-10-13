@@ -1,13 +1,12 @@
 # ClickMart API
 
-Express 5 + TypeScript. Data lives in **Supabase** (PostgreSQL) and is reached through Supabase's REST API with `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`. No database password or connection string is needed.
+Express 5 on plain Node.js (JavaScript, Node 22+). Data lives in **Supabase** (PostgreSQL) and is reached through Supabase's REST API with `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`. No database password or connection string is needed.
 
 ## Set up with Supabase
 
 1. **Create or update the tables.** Supabase dashboard → SQL Editor → paste all of [`supabase/schema.sql`](supabase/schema.sql) → Run. It is safe to run on the project you already have: missing tables are created, missing columns are added, and your products and orders stay. Then it installs the functions, security rules, report views, starter settings and the `product-images` bucket.
-2. **Fill `backend/.env`** (copy `.env.example`): `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, two long random `JWT_*` secrets, and `SEED_ADMIN_PASSWORD`.
-3. **Load the catalogue and admin account:** `npm install && npm run db:seed`
-4. **Run:** `npm run dev` → http://localhost:3000
+2. **Fill `backend/.env`** (copy `.env.example`): `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, two long random `JWT_*` secrets.
+3. **Run:** `npm install && npm run dev` → http://localhost:3000
 
 Key rules: the service key stays on the server only. Row Level Security is on for every table with no policies and the functions are executable by `service_role` only, so the public publishable/anon key can read and call nothing.
 
@@ -15,17 +14,11 @@ Key rules: the service key stays on the server only. Row Level Security is on fo
 
 Supabase's REST API cannot run multi-step transactions. The steps that must be all-or-nothing live in Postgres functions (section 11 of `schema.sql`) that the API calls with `rpc`: `create_order` (reserves stock, claims the coupon, writes the order), `adjust_stock`, `mark_paid`, `fail_payment`, `change_order_status`, `finish_refund`, `expire_stale_orders`, plus `admin_analytics`, `customer_stats`, `order_status_counts`, `recompute_rating`. Locking is done by Postgres, so two shoppers can never buy the last pouch.
 
-## Develop and test without touching your real project
-
-`docker-compose.yml` runs a local stand-in for Supabase: Postgres + PostgREST behind a `/rest/v1` gateway on `http://localhost:54321`.
+## Tests
 
 ```bash
-npm run db:local:reset   # fresh local database from supabase/schema.sql (needs Docker running)
-npm test                 # 17 integration tests, always against .env.test (local stack only)
-NODE_ENV=test npm run db:seed   # seed the local stack
+npm test   # unit tests for password hashing, JWT and HTTPS rules; no database needed
 ```
-
-`npm test` reads `.env.test` and refuses to run unless `SUPABASE_URL` is localhost, so tests can never write to a real project. To run the API itself against the local stack: `NODE_ENV=test npx tsx src/server.ts`.
 
 ## Login system (JWT)
 
@@ -34,7 +27,7 @@ NODE_ENV=test npm run db:seed   # seed the local stack
 - **Passwords:** stored as `v2$` + bcrypt(cost 12) of `HMAC-SHA256(password, PASSWORD_PEPPER)`. Salted per user, slow to guess, and the pepper lives only in the server environment, so a stolen database alone cannot be cracked offline. Registration and reset require 8+ characters. Wrong email and wrong password give the same message and take the same time. Older plain-bcrypt hashes still work and are upgraded on the next login.
 - **Keep `PASSWORD_PEPPER` safe:** generate with `openssl rand -hex 32`, back it up, never change it (changing it locks everyone out).
 - **Transport:** in production every request must be HTTPS (plain GETs redirect, other methods get 426), HSTS is sent for 2 years, and cookies are `Secure`. JWTs are pinned to HS256 with an issuer check.
-- **Seeded account:** `npm run db:seed` creates the admin from `SEED_ADMIN_NAME/EMAIL/PASSWORD` in `.env` (hash only; an existing account's password is never overwritten).
+- **No seed data.** The repo ships no sample products, orders or accounts. Add the catalogue and staff from the admin app.
 - **Forgot password:** `/auth/forgot-password` always answers the same way (no account discovery), emails a single-use link valid for 30 minutes (newer requests cancel older links); `/auth/reset-password` signs the user out everywhere. Links go to `STORE_URL` for customers and `ADMIN_URL` for staff.
 - **Limits:** 20 failed log-ins/registrations per IP per 15 min, 8 reset requests, 300 refreshes.
 - Dev: with no `SMTP_URL`, emails (including reset links) are printed in the API console.
@@ -64,8 +57,32 @@ NODE_ENV=test npm run db:seed   # seed the local stack
 
 `PAYMENT_PROVIDER=mock` (default) simulates a gateway so the full flow works without keys: `POST /checkout` returns `payment.providerOrderId`, the storefront calls `/payments/mock/pay` to get a signed payment id, then `/payments/verify`. Set `PAYMENT_PROVIDER=razorpay` with `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` for real orders and refunds, and point Razorpay's webhook at `/api/v1/payments/webhook`.
 
+## Deploy on Render
+
+Root Directory: `backend`. Build Command: `npm install --include=dev && npm run build`. Start Command: `npm start`.
+
+`npm start` runs `node src/server.js`. There is no build step. On Render use Root Directory `backend`, Build Command `npm install`, Start Command `npm start` (also in the repo-root `render.yaml`). Render does not read `.env`; add each variable in the service's Environment tab.
+
+Set `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (each at least 16 characters), `PASSWORD_PEPPER` (at least 32), `CORS_ORIGINS`, `STORE_URL`, `ADMIN_URL`. Production refuses to boot with development secrets or a localhost database.
+
 ## Not done yet
 
 - Storefront and admin UI: the admin is connected; the storefront still reads local data.
 - Email is logged to the console until `SMTP_URL` is set.
 - Courier integration (Shiprocket etc.): status and tracking number are entered by hand in the admin.
+
+## Folder structure
+
+```
+src/
+  server.js        starts the API and the cleanup timer
+  app.js           builds the Express app (security headers, CORS, rate limits, routes)
+  config/          env.js: reads and checks environment variables
+  database/        db.js (Supabase client and helpers), selects.js (shared select strings)
+  middleware/      auth, errors, https
+  routes/          one file per area of the API (admin/ holds the staff routes)
+  services/        business logic: orders, pricing, payments, auth tokens, accounts, mail, storage, settings
+  utils/           small helpers: errors, serializers, slug
+supabase/          schema.sql and migrations/
+tests/             unit tests
+```

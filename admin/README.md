@@ -12,7 +12,7 @@ cd ../backend && npm run dev   # needs backend/.env with your SUPABASE_URL and S
 cd ../admin && npm install && npm run dev
 ```
 
-Sign in with the seeded admin (`admin@clickmart.com` and the `SEED_ADMIN_PASSWORD` from `backend/.env`). Customers cannot sign in here.
+Sign in with an admin account.
 
 The dev server proxies `/api` and `/uploads` to the backend, so no CORS setup is needed locally. For production, build with `VITE_API_URL=https://api.yourdomain.com npm run build`, and add the admin's origin to `CORS_ORIGINS` in the backend.
 
