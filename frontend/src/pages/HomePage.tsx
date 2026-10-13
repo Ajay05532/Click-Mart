@@ -1,15 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Container } from '../components/layout/Container.tsx'
-import { BoxIcon, LeafIcon, ShieldIcon, TruckIcon } from '../components/icons.tsx'
+import { BoxIcon, LeafIcon, ShieldIcon, TagIcon, TruckIcon } from '../components/icons.tsx'
 import { ProductCard } from '../components/product/ProductCard.tsx'
 import { ProductMedia } from '../components/product/ProductMedia.tsx'
 import { SectionHeading } from '../components/ui/Primitives.tsx'
 import { Stars } from '../components/ui/Stars.tsx'
-import { featuredPack, packCards, productPath, useActiveCoupons, useBanners, useCategories, useProducts, useStoreSettings } from '../lib/catalog.ts'
+import { featuredPack, productPath, useActiveCoupons, useBanners, useCategories, useProducts, useStoreSettings } from '../lib/catalog.ts'
 import { testimonials } from '../data/reviews.ts'
-import { formatPrice } from '../lib/money.ts'
+import { discountPercent, formatPrice } from '../lib/money.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import type { Pack, Product } from '../types.ts'
 
 const promisesFor = (freeAt: number) => [
   { icon: LeafIcon, title: '100% Natural', text: 'No preservatives or added sugar' },
@@ -24,31 +25,67 @@ const steps = [
   { step: '03', title: 'Track it to your door', text: 'Follow every step live, from our Patna packing desk to your doorstep.' },
 ]
 
+type ShelfTab = 'all' | 'sale' | 'best'
+
+/** Time left until midnight, so the sale strip has a live countdown. */
+function useCountdown() {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  const end = new Date(now)
+  end.setHours(23, 59, 59, 999)
+  const left = Math.max(0, end.getTime() - now)
+  const pad = (n: number) => String(Math.floor(n)).padStart(2, '0')
+  return [pad(left / 3600000), pad((left / 60000) % 60), pad((left / 1000) % 60)]
+}
+
+function deepestCut(product: Product): Pack {
+  return [...product.packs].sort((a, b) => discountPercent(b.price, b.mrp) - discountPercent(a.price, a.mrp))[0] ?? featuredPack(product)
+}
+
 
 export function HomePage() {
   useDocumentTitle('ClickMart')
-  const [copied, setCopied] = useState(false)
+  const [shelf, setShelf] = useState<ShelfTab>('all')
+  const [copied, setCopied] = useState<string | null>(null)
+  const [hours, minutes, seconds] = useCountdown()
   const settings = useStoreSettings()
   const promises = promisesFor(settings.freeShippingThreshold)
   const categories = useCategories().data ?? []
-  const best = useProducts({ bestseller: true, pageSize: 8 })
-  const popular = useProducts({ sort: 'popular', pageSize: 12 })
+  const lone = categories.length === 1 ? categories[0] : undefined
+  const catalog = useProducts({ category: lone?.id, sort: 'popular', pageSize: 12 })
+  const sale = useProducts({ category: lone?.id, onSale: true, sort: 'discount', pageSize: 12 })
+  const best = useProducts({ category: lone?.id, bestseller: true, pageSize: 8 })
   const catalogSize = useProducts({ pageSize: 1 }).data?.total
   const promo = useBanners('PROMO').data?.[0]
-  const topCoupon = (useActiveCoupons().data ?? []).find((coupon) => coupon.type === 'PERCENT')
-  const bestsellers = (best.data?.items ?? []).slice(0, 4)
-  const spotlight = bestsellers[0] ?? popular.data?.items[0]
+  const coupons = useActiveCoupons().data ?? []
+  const bestsellers = best.data?.items ?? []
+  const spotlight = bestsellers[0] ?? catalog.data?.items[0]
   const spotlightPack = spotlight ? featuredPack(spotlight) : undefined
-  const alsoLoved = (popular.data?.items ?? []).filter((product) => !product.bestseller && product.inStock).slice(0, 4)
+  const tabs = [
+    { id: 'all' as const, label: 'All' },
+    ...(sale.data && sale.data.total > 0 ? [{ id: 'sale' as const, label: 'On sale' }] : []),
+    ...(best.data && best.data.total > 0 ? [{ id: 'best' as const, label: 'Best sellers' }] : []),
+  ]
+  const activeTab = tabs.some((tab) => tab.id === shelf) ? shelf : 'all'
+  const activeQuery = activeTab === 'sale' ? sale : activeTab === 'best' ? best : catalog
+  const activeItems = activeQuery.data?.items ?? []
+  const cards = activeItems.map((product) => ({
+    product,
+    pack: activeTab === 'sale' ? deepestCut(product) : featuredPack(product),
+  }))
+  const viewAll = activeTab === 'sale' ? '/sale' : lone ? `/shop?category=${lone.id}` : '/shop'
 
-  const copyCode = async () => {
+  const copyCode = async (code: string) => {
     try {
-      await navigator.clipboard.writeText(topCoupon?.code ?? 'DRY15')
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1800)
+      await navigator.clipboard.writeText(code)
     } catch {
-      setCopied(false)
+      /* The button still confirms the tap when the clipboard is blocked. */
     }
+    setCopied(code)
+    window.setTimeout(() => setCopied((current) => (current === code ? null : current)), 1800)
   }
 
   return (
@@ -115,23 +152,69 @@ export function HomePage() {
         </Container>
       </section>
 
-      {/* Category strip */}
-      <section className="bg-ink py-7 text-white sm:py-9">
+      <section className="border-b border-line bg-white py-8 sm:py-12">
         <Container>
-          <ul className="flex flex-wrap items-center justify-center gap-x-8 gap-y-4 sm:justify-between sm:gap-x-12">
-            {categories.slice(0, 6).map((category) => (
-              <li key={category.id}>
-                <Link
-                  to={`/shop?category=${category.id}`}
-                  className="text-xl font-extrabold tracking-wide uppercase opacity-90 transition hover:text-accent hover:opacity-100 sm:text-3xl"
-                >
-                  {category.name}
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p className="eyebrow">{lone?.name ?? 'The shop'}</p>
+              <h2 className="mt-1.5 text-2xl font-extrabold tracking-tight text-ink sm:text-3xl">Shop the range</h2>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div role="tablist" aria-label="Browse products" className="flex rounded-full bg-canvas p-1">
+                {tabs.map((tab) => {
+                  const selected = activeTab === tab.id
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={selected}
+                      onClick={() => setShelf(tab.id)}
+                      className={`rounded-full px-4 py-2 text-sm font-bold transition ${
+                        selected ? 'bg-ink text-white shadow-sm' : 'text-ink/70 hover:bg-white hover:text-ink'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  )
+                })}
+              </div>
+              <Link to={viewAll} className="text-sm font-bold text-brand">
+                View all →
+              </Link>
+            </div>
+          </div>
+          <div key={activeTab} className="stagger mt-8 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">
+            {activeQuery.isPending
+              ? Array.from({ length: 4 }, (_, index) => <div key={index} className="aspect-[3/4] animate-pulse rounded-[1.25rem] bg-canvas" />)
+              : cards.slice(0, 8).map(({ product, pack }) => (
+                  <ProductCard key={`${product.id}-${pack.size}`} product={product} pack={pack} />
+                ))}
+          </div>
+          {!activeQuery.isPending && cards.length === 0 && (
+            <p className="mt-8 text-sm text-muted">Nothing in this list yet. Try another tab.</p>
+          )}
         </Container>
       </section>
+
+      {categories.length > 1 ? (
+        <section className="bg-ink py-7 text-white sm:py-9">
+          <Container>
+            <ul className="flex flex-wrap items-center justify-center gap-x-8 gap-y-4 sm:justify-between sm:gap-x-12">
+              {categories.slice(0, 6).map((category) => (
+                <li key={category.id}>
+                  <Link
+                    to={`/shop?category=${category.id}`}
+                    className="text-xl font-extrabold tracking-wide uppercase opacity-90 transition hover:text-accent hover:opacity-100 sm:text-3xl"
+                  >
+                    {category.name}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Container>
+        </section>
+      ) : null}
 
       {/* Promises */}
       <section className="py-10">
@@ -152,62 +235,68 @@ export function HomePage() {
         </Container>
       </section>
 
-      {/* Categories */}
-      <section className="pb-14">
-        <Container>
-          <SectionHeading eyebrow="Browse" title="Shop by category" action={{ to: '/shop', label: 'View all' }} />
-          <div className="no-scrollbar -mx-4 mt-7 flex gap-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0 lg:grid lg:grid-cols-7 lg:overflow-visible">
-            {categories.map((category) => (
-              <Link key={category.id} to={`/shop?category=${category.id}`} className="group w-28 shrink-0 text-center lg:w-auto">
-                <span className="relative mx-auto block aspect-square w-full overflow-hidden rounded-full border-4 border-white shadow-card ring-1 ring-line transition duration-300 group-hover:-translate-y-1 group-hover:shadow-lift group-hover:ring-accent">
-                  <ProductMedia name={category.name} image={category.image} art={category.art} className="motion-zoom size-full" />
-                </span>
-                <span className="mt-3 block text-sm font-extrabold group-hover:text-brand">{category.name}</span>
-                <span className="block text-[11px] text-muted">{category.subcategories.length} grades</span>
-              </Link>
-            ))}
-          </div>
-        </Container>
-      </section>
+      {categories.length > 1 && (
+        <section className="pb-14">
+          <Container>
+            <SectionHeading eyebrow="Browse" title="Shop by category" action={{ to: '/shop', label: 'View all' }} />
+            <div className="no-scrollbar -mx-4 mt-7 flex gap-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0 lg:grid lg:grid-cols-7 lg:overflow-visible">
+              {categories.map((category) => (
+                <Link key={category.id} to={`/shop?category=${category.id}`} className="group w-28 shrink-0 text-center lg:w-auto">
+                  <span className="relative mx-auto block aspect-square w-full overflow-hidden rounded-full border-4 border-white shadow-card ring-1 ring-line transition duration-300 group-hover:-translate-y-1 group-hover:shadow-lift group-hover:ring-accent">
+                    <ProductMedia name={category.name} image={category.image} art={category.art} className="motion-zoom size-full" />
+                  </span>
+                  <span className="mt-3 block text-sm font-extrabold group-hover:text-brand">{category.name}</span>
+                  <span className="block text-[11px] text-muted">{category.subcategories.length} grades</span>
+                </Link>
+              ))}
+            </div>
+          </Container>
+        </section>
+      )}
 
-      {/* Best sellers */}
-      <section className="bg-canvas py-14">
-        <Container>
-          <SectionHeading eyebrow="Most reordered" title="Customer favourites" action={{ to: '/shop', label: 'Shop all' }} />
-          <div className="stagger mt-8 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">
-            {packCards(bestsellers).map(({ product, pack }) => (
-              <ProductCard key={`${product.id}-${pack.size}`} product={product} pack={pack} />
-            ))}
-          </div>
-        </Container>
-      </section>
-
-      {/* Offer banner */}
       <section className="py-14">
         <Container>
           <div className="relative grid overflow-hidden rounded-[2rem] bg-gradient-to-br from-brand-dark via-brand to-[#1d56b8] text-white lg:grid-cols-[1.1fr_0.9fr]">
             <div className="pointer-events-none absolute -top-20 -left-10 size-72 rounded-full bg-accent/25 blur-3xl" />
             <div className="relative p-8 sm:p-12">
-              <p className="eyebrow !text-orange-300">This week only</p>
+              <p className="eyebrow !text-orange-300">On sale</p>
               <h2 className="mt-3 max-w-md text-3xl leading-tight font-extrabold tracking-tight sm:text-4xl">
-                {promo?.title ?? (topCoupon ? `${topCoupon.value}% off every pouch` : 'Fresh offers every week')}
+                {promo?.title ?? (coupons[0]?.type === 'PERCENT' ? `${coupons[0].value}% off every pouch` : 'Fresh offers every week')}
               </h2>
               <p className="mt-4 max-w-md leading-7 text-white/75">
-                {promo?.subtitle || 'Healthy snacking, made simple. Use the code at checkout and it comes off your whole basket.'}
+                {promo?.subtitle || 'Tap a code to copy it, then use it at checkout. It comes off your whole basket.'}
               </p>
-              <div className="mt-8 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => void copyCode()}
-                  className="inline-flex items-center gap-3 rounded-full border-2 border-dashed border-white/50 bg-white/10 py-3 pr-5 pl-6 text-sm font-extrabold tracking-[0.2em] backdrop-blur transition hover:bg-white/20"
-                >
-                  {topCoupon?.code ?? 'DRY15'}
-                  <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-extrabold tracking-normal text-brand">
-                    {copied ? 'Copied ✓' : 'Copy'}
-                  </span>
-                </button>
+              <div className="mt-6 flex items-center gap-2" aria-label="Today's deals end in">
+                {[
+                  [hours, 'Hrs'],
+                  [minutes, 'Min'],
+                  [seconds, 'Sec'],
+                ].map(([value, label]) => (
+                  <div key={label} className="grid h-14 w-14 place-items-center rounded-2xl bg-white/10 ring-1 ring-white/15">
+                    <div className="text-center">
+                      <p className="text-lg leading-none font-extrabold tabular-nums">{value}</p>
+                      <p className="mt-1 text-[10px] text-white/55 uppercase">{label}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-6 flex flex-wrap items-center gap-3">
+                {coupons.slice(0, 3).map((coupon) => (
+                  <button
+                    key={coupon.code}
+                    type="button"
+                    onClick={() => void copyCode(coupon.code)}
+                    className="inline-flex items-center gap-3 rounded-full border-2 border-dashed border-white/50 bg-white/10 py-2.5 pr-3 pl-4 text-sm font-extrabold tracking-[0.16em] backdrop-blur transition hover:bg-white/20"
+                  >
+                    <TagIcon className="size-4" />
+                    {coupon.code}
+                    <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-extrabold tracking-normal text-brand">
+                      {copied === coupon.code ? 'Copied ✓' : 'Copy'}
+                    </span>
+                  </button>
+                ))}
                 <Link to={promo?.link ?? '/sale'} className="btn btn-accent btn-lg">
-                  Shop the offer
+                  Shop the sale
                 </Link>
               </div>
             </div>
@@ -215,18 +304,6 @@ export function HomePage() {
               <img src={promo?.image ?? '/images/walnuts.jpg'} alt="" className="absolute inset-0 size-full object-cover" />
               <div className="absolute inset-0 bg-gradient-to-r from-brand-dark/80 via-transparent to-transparent" />
             </div>
-          </div>
-        </Container>
-      </section>
-
-      {/* Also in pantry */}
-      <section className="pb-14">
-        <Container>
-          <SectionHeading eyebrow="Worth a look" title="Also in the pantry" />
-          <div className="stagger mt-8 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">
-            {packCards(alsoLoved).map(({ product, pack }) => (
-              <ProductCard key={`${product.id}-${pack.size}`} product={product} pack={pack} />
-            ))}
           </div>
         </Container>
       </section>

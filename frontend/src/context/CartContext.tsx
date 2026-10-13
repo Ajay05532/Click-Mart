@@ -1,6 +1,7 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, api, errorMessage } from '../lib/api.ts'
+import type { Pack, Product } from '../types.ts'
 import { useAuth } from './AuthContext.tsx'
 
 type CartLine = { variantId: string; quantity: number }
@@ -37,6 +38,8 @@ type Quote = {
 
 type CartContextValue = {
   lines: ResolvedLine[]
+  /** Pack quantities, known instantly without waiting for the server price. */
+  items: CartLine[]
   /** Items in the cart, known instantly without waiting for the server. */
   count: number
   subtotal: number
@@ -48,7 +51,10 @@ type CartContextValue = {
   coupon: { code: string } | null
   /** True while prices are being (re)calculated. */
   pricing: boolean
-  toast: string | null
+  /** Set when the price quote failed and there is nothing to show yet. */
+  quoteError: string | null
+  reloadQuote: () => void
+  toast: { text: string; count?: number } | null
   toastTick: number
   addItem: (variantId: string, quantity?: number, label?: string) => void
   updateQty: (variantId: string, quantity: number) => void
@@ -78,17 +84,69 @@ const merge = (a: CartLine[], b: CartLine[]) => {
   return [...map].map(([variantId, quantity]) => ({ variantId, quantity }))
 }
 
+function addProduct(found: Map<string, Product>, product: Product | undefined) {
+  if (product?.id && product.packs?.length) found.set(product.id, product)
+}
+
+/** Products already loaded for the shop, so the cart can be drawn before the price quote returns. */
+function cachedProducts(queryClient: QueryClient): Product[] {
+  const found = new Map<string, Product>()
+  for (const [, data] of queryClient.getQueriesData<{ product?: Product; related?: Product[]; items?: Product[] } | Product[]>({ queryKey: ['product'] })) {
+    if (Array.isArray(data)) data.forEach((product) => addProduct(found, product))
+    else {
+      addProduct(found, data?.product)
+      data?.related?.forEach((product) => addProduct(found, product))
+      data?.items?.forEach((product) => addProduct(found, product))
+    }
+  }
+  for (const [, data] of queryClient.getQueriesData<{ items?: Product[] } | Product[]>({ queryKey: ['products'] })) {
+    if (Array.isArray(data)) data.forEach((product) => addProduct(found, product))
+    else data?.items?.forEach((product) => addProduct(found, product))
+  }
+  return [...found.values()]
+}
+
+function previewLines(items: CartLine[], products: Product[]): ResolvedLine[] {
+  const packs = new Map<string, { product: Product; pack: Pack }>()
+  for (const product of products) for (const pack of product.packs) packs.set(pack.variantId, { product, pack })
+  const lines: ResolvedLine[] = []
+  for (const item of items) {
+    const match = packs.get(item.variantId)
+    if (!match) continue
+    const { product, pack } = match
+    lines.push({
+      key: item.variantId,
+      variantId: item.variantId,
+      productId: product.id,
+      name: product.name,
+      slug: product.slug,
+      image: product.images?.[0] ?? product.image,
+      art: product.art,
+      size: pack.size,
+      quantity: item.quantity,
+      unitPrice: pack.price,
+      mrp: pack.mrp,
+      lineTotal: pack.price * item.quantity,
+      stock: pack.stock ?? product.stock,
+      offerName: pack.offer?.name ?? null,
+    })
+  }
+  return lines
+}
+
 export function CartProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
+  const queryClient = useQueryClient()
   const [lines, setLines] = useState<CartLine[]>(loadLines)
+  const [cacheTick, setCacheTick] = useState(0)
   const [couponCode, setCouponCode] = useState<string | null>(() => localStorage.getItem(COUPON_KEY))
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ text: string; count?: number } | null>(null)
   const [toastTick, setToastTick] = useState(0)
   const synced = useRef<string | null>(null)
 
-  const notify = useCallback((message: string) => {
+  const notify = useCallback((text: string, count?: number) => {
     setToastTick((tick) => tick + 1)
-    setToast(message)
+    setToast({ text, count })
   }, [])
 
   useEffect(() => {
@@ -100,7 +158,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [couponCode])
   useEffect(() => {
     if (!toast) return
-    const timer = window.setTimeout(() => setToast(null), 2800)
+    const timer = window.setTimeout(() => setToast(null), 4500)
     return () => window.clearTimeout(timer)
   }, [toast, toastTick])
 
@@ -137,12 +195,28 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const quote = useQuery({
     queryKey: ['quote', lines, couponCode],
-    queryFn: () => api<Quote>('/cart/quote', { body: { items: lines, couponCode } }),
+    queryFn: ({ queryKey }) => {
+      const items = queryKey[1] as CartLine[]
+      const code = queryKey[2] as string | null
+      return api<Quote>('/cart/quote', { body: { items, couponCode: code } })
+    },
     enabled: lines.length > 0,
     placeholderData: keepPreviousData,
     staleTime: 10_000,
-    retry: false,
   })
+
+  // The catalogue query lives in the page, so listen for it and redraw the cart once those products arrive.
+  const awaitingQuote = lines.length > 0 && !quote.data
+  const awaitingQuoteRef = useRef(awaitingQuote)
+  awaitingQuoteRef.current = awaitingQuote
+  useEffect(() => {
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (!awaitingQuoteRef.current) return
+      const head = event.query.queryKey[0]
+      if (head !== 'product' && head !== 'products') return
+      setCacheTick((tick) => tick + 1)
+    })
+  }, [queryClient])
 
   // The server is the authority on stock and coupons: react when it disagrees with the cart.
   const failure = quote.error
@@ -163,24 +237,39 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const data = lines.length > 0 ? quote.data : undefined
   const resolved = useMemo<ResolvedLine[]>(() => {
-    if (!data) return []
     const quantities = new Map(lines.map((line) => [line.variantId, line.quantity]))
-    return data.lines
-      .filter((line) => quantities.has(line.variantId))
-      .map((line) => {
-        const quantity = quantities.get(line.variantId) ?? line.quantity
-        return { ...line, key: line.variantId, quantity, lineTotal: line.unitPrice * quantity }
-      })
-  }, [data, lines])
+    const quoted: ResolvedLine[] = data
+      ? data.lines
+          .filter((line) => quantities.has(line.variantId))
+          .map((line) => {
+            const quantity = quantities.get(line.variantId) ?? line.quantity
+            return { ...line, key: line.variantId, quantity, lineTotal: line.unitPrice * quantity }
+          })
+      : []
+    // A full quote is the price authority. Until it arrives, use products the shop has already loaded.
+    if (quoted.length === lines.length && lines.length > 0) return quoted
+    const previews = previewLines(lines, cachedProducts(queryClient))
+    if (quoted.length === 0) return previews
+    const byId = new Map(previews.map((line) => [line.variantId, line]))
+    for (const line of quoted) byId.set(line.variantId, line)
+    return lines.flatMap((item) => {
+      const line = byId.get(item.variantId)
+      return line ? [line] : []
+    })
+  }, [data, lines, queryClient, cacheTick])
 
   const addItem = useCallback(
     (variantId: string, quantity = 1, label?: string) => {
+      let count = 0
       setLines((current) => {
         const existing = current.find((line) => line.variantId === variantId)
-        if (!existing) return [...current, { variantId, quantity }]
-        return current.map((line) => (line === existing ? { ...line, quantity: Math.min(99, line.quantity + quantity) } : line))
+        const next = existing
+          ? current.map((line) => (line.variantId === variantId ? { ...line, quantity: Math.min(99, line.quantity + quantity) } : line))
+          : [...current, { variantId, quantity }]
+        count = next.reduce((sum, line) => sum + line.quantity, 0)
+        return next
       })
-      notify(`${label ?? 'Item'} added to cart`)
+      notify(`${label ?? 'Item'} added to cart`, count)
     },
     [notify],
   )
@@ -189,6 +278,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setLines((current) => (quantity < 1 ? current.filter((line) => line.variantId !== variantId) : current.map((line) => (line.variantId === variantId ? { ...line, quantity: Math.min(99, quantity) } : line))))
   }, [])
   const removeItem = useCallback((variantId: string) => setLines((current) => current.filter((line) => line.variantId !== variantId)), [])
+
+  const reloadQuote = useCallback(() => {
+    void quote.refetch()
+  }, [quote.refetch])
 
   const applyCoupon = useCallback(
     async (code: string) => {
@@ -206,18 +299,23 @@ export function CartProvider({ children }: { children: ReactNode }) {
     [lines],
   )
 
+  const covered = lines.length > 0 && resolved.length === lines.length
+  const subtotal = covered ? resolved.reduce((sum, line) => sum + line.lineTotal, 0) : (data?.subtotal ?? 0)
   const value = useMemo<CartContextValue>(
     () => ({
       lines: resolved,
+      items: lines,
       count: lines.reduce((sum, line) => sum + line.quantity, 0),
-      subtotal: data?.subtotal ?? 0,
+      subtotal,
       discount: data?.couponDiscount ?? 0,
       shipping: data?.shipping ?? 0,
-      total: data?.total ?? 0,
+      total: data?.total ?? subtotal,
       savings: data?.savings ?? 0,
       freeShipping: data?.freeShippingApplied ?? false,
       coupon: data?.couponCode ? { code: data.couponCode } : null,
-      pricing: lines.length > 0 && (quote.isFetching || !data),
+      pricing: lines.length > 0 && quote.isFetching,
+      quoteError: lines.length > 0 && quote.isError && !quote.isFetching ? errorMessage(quote.error) : null,
+      reloadQuote,
       toast,
       toastTick,
       addItem,
@@ -230,7 +328,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         setCouponCode(null)
       },
     }),
-    [resolved, lines, data, quote.isFetching, toast, toastTick, addItem, updateQty, removeItem, applyCoupon],
+    [resolved, lines, data, subtotal, quote.isFetching, quote.isError, quote.error, reloadQuote, toast, toastTick, addItem, updateQty, removeItem, applyCoupon],
   )
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>

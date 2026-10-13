@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   BoxIcon,
@@ -20,6 +20,7 @@ import { errorMessage } from '../lib/api.ts'
 import { useCart } from '../context/CartContext.tsx'
 import { useWishlist } from '../context/WishlistContext.tsx'
 import { indianStates } from '../data/india.ts'
+import { geo } from '../lib/location.ts'
 import { api } from '../lib/api.ts'
 import { formatPrice } from '../lib/money.ts'
 import { useMyOrders } from '../lib/orders.ts'
@@ -44,6 +45,16 @@ import {
 } from '../lib/wallet.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
+const matchState = (name: string | null, fallback: string) => {
+  if (!name?.trim()) return fallback
+  const lower = name.trim().toLowerCase()
+  return (
+    indianStates.find((state) => state.toLowerCase() === lower) ??
+    indianStates.find((state) => lower.includes(state.toLowerCase()) || state.toLowerCase().includes(lower)) ??
+    name.trim()
+  )
+}
+
 const tabs = [
   { id: 'orders', label: 'Orders', icon: BoxIcon, group: 'Shopping' },
   { id: 'profile', label: 'Profile', icon: UserIcon, group: 'Account' },
@@ -60,18 +71,6 @@ type Tab = (typeof tabs)[number]['id']
 
 const PREFS_KEY = 'clickmart-prefs'
 const LOCALE_KEY = 'clickmart-locale'
-
-const emptyAddress = (): Omit<SavedAddress, 'id'> => ({
-  name: '',
-  phone: '',
-  line: '',
-  city: '',
-  state: 'Karnataka',
-  pin: '',
-  landmark: null,
-  label: 'HOME',
-  isDefault: true,
-})
 
 function readJson<T>(key: string): T | null {
   try {
@@ -300,15 +299,108 @@ function Security() {
   )
 }
 
+type AddressDraft = {
+  name: string
+  phone: string
+  pin: string
+  locality: string
+  line: string
+  city: string
+  state: string
+  landmark: string
+  label: SavedAddress['label']
+  isDefault: boolean
+}
+
+const emptyDraft = (name: string, phone: string, isDefault: boolean): AddressDraft => ({
+  name,
+  phone: phone.replace(/\D/g, '').slice(-10),
+  pin: '',
+  locality: '',
+  line: '',
+  city: '',
+  state: '',
+  landmark: '',
+  label: 'HOME',
+  isDefault,
+})
+
+const draftFrom = (item: SavedAddress): AddressDraft => ({
+  name: item.name,
+  phone: item.phone,
+  pin: item.pin,
+  locality: '',
+  line: item.line,
+  city: item.city,
+  state: matchState(item.state, item.state),
+  landmark: item.landmark ?? '',
+  label: item.label,
+  isDefault: item.isDefault,
+})
+
+function addressProblems(form: AddressDraft) {
+  const next: Partial<Record<keyof AddressDraft, string>> = {}
+  if (form.name.trim().length < 2) next.name = 'Enter the full name'
+  if (!/^[6-9]\d{9}$/.test(form.phone)) next.phone = 'Enter a 10-digit mobile number'
+  if (!/^\d{6}$/.test(form.pin)) next.pin = 'Enter a 6-digit PIN code'
+  if (form.locality.trim().length < 2) next.locality = 'Please fill in this field'
+  if (form.line.trim().length < 8) next.line = 'Enter house no., street and area'
+  if (form.city.trim().length < 2) next.city = 'Enter the city'
+  if (form.state.trim().length < 2) next.state = 'Choose a state'
+  return next
+}
+
 function Addresses() {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const query = useSavedAddresses(user?.id)
   const list = query.data ?? []
-  const [draft, setDraft] = useState<(Omit<SavedAddress, 'id'> & { id?: string }) | null>(null)
+  const [editing, setEditing] = useState<SavedAddress | 'new' | null>(null)
+  const [form, setForm] = useState<AddressDraft>(() => emptyDraft('', '', true))
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof AddressDraft, string>>>({})
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [locating, setLocating] = useState(false)
+  const lookedUp = useRef('')
+  const pinAnchor = useRef<string | null>(null)
+  const started = useRef(false)
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['addresses'] })
+
+  useEffect(() => {
+    if (started.current || query.isLoading) return
+    started.current = true
+    pinAnchor.current = null
+    setEditing('new')
+    setForm(emptyDraft(user?.name ?? '', user?.phone ?? '', (query.data?.length ?? 0) === 0))
+  }, [query.isLoading, query.data, user?.name, user?.phone])
+
+  const openForm = (target: SavedAddress | 'new') => {
+    lookedUp.current = ''
+    pinAnchor.current = target === 'new' ? null : target.pin
+    setEditing(target)
+    setError('')
+    setFieldErrors({})
+    setForm(target === 'new' ? emptyDraft(user?.name ?? '', user?.phone ?? '', list.length === 0) : draftFrom(target))
+  }
+
+  useEffect(() => {
+    if (!editing || !/^\d{6}$/.test(form.pin) || form.pin === lookedUp.current) return
+    const pin = form.pin
+    const timer = window.setTimeout(() => {
+      geo.pin(pin).then((place) => {
+        if (!place) return
+        lookedUp.current = pin
+        const changed = pinAnchor.current !== null && pin !== pinAnchor.current
+        setForm((current) => current.pin !== pin ? current : {
+          ...current,
+          city: changed || !current.city ? place.city || current.city : current.city,
+          state: changed || !current.state ? matchState(place.state, current.state) : current.state,
+          locality: changed || !current.locality ? place.area || current.locality : current.locality,
+        })
+      }).catch(() => undefined)
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [editing, form.pin])
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true)
@@ -325,101 +417,192 @@ function Addresses() {
     }
   }
 
-  const saveDraft = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!draft) return
-    if (draft.pin.length !== 6) return setError('Enter a 6-digit PIN code')
-    if (!/^[6-9]\d{9}$/.test(draft.phone)) return setError('Enter a valid 10-digit mobile number')
-    if (draft.line.trim().length < 8) return setError('Enter the full address (house no., street, area)')
-    const body = { name: draft.name.trim(), phone: draft.phone, line: draft.line.trim(), city: draft.city.trim(), state: draft.state, pin: draft.pin, landmark: draft.landmark?.trim() || null, label: draft.label, isDefault: draft.isDefault || list.length === 0 }
-    const ok = await run(() => (draft.id ? api(`/me/addresses/${draft.id}`, { method: 'PUT', body }) : api('/me/addresses', { body })))
-    if (ok) setDraft(null)
+  const useCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setError('This browser cannot read your location.')
+      return
+    }
+    setLocating(true)
+    setError('')
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        geo.reverse(position.coords.latitude, position.coords.longitude)
+          .then((place) => {
+            if (!place?.pin) {
+              setError('We could not match this spot to an Indian PIN code. Type it in.')
+              return
+            }
+            lookedUp.current = place.pin
+            setForm((current) => ({
+              ...current,
+              pin: place.pin ?? current.pin,
+              city: place.city || current.city,
+              state: matchState(place.state, current.state),
+              locality: place.area || current.locality,
+              line: current.line || place.label.split(', ').slice(0, 2).join(', '),
+            }))
+          })
+          .catch(() => setError('Location lookup is busy. Type the PIN code instead.'))
+          .finally(() => setLocating(false))
+      },
+      () => {
+        setLocating(false)
+        setError('Allow location access, or type the PIN code.')
+      },
+      { enableHighAccuracy: true, timeout: 8000 },
+    )
   }
 
+  const save = (event: FormEvent) => {
+    event.preventDefault()
+    const problems = addressProblems(form)
+    setFieldErrors(problems)
+    if (Object.keys(problems).length > 0) return
+    const locality = form.locality.trim()
+    const street = form.line.trim()
+    const line = locality && !street.toLowerCase().includes(locality.toLowerCase())
+      ? `${street}, ${locality}`.slice(0, 250)
+      : street
+    const body = {
+      name: form.name.trim(),
+      phone: form.phone,
+      line,
+      city: form.city.trim(),
+      state: matchState(form.state, form.state.trim()),
+      pin: form.pin,
+      landmark: form.landmark.trim() || null,
+      label: form.label,
+      isDefault: form.isDefault || list.length === 0,
+    }
+    void run(async () => {
+      if (editing && editing !== 'new') await api(`/me/addresses/${editing.id}`, { method: 'PUT', body })
+      else await api('/me/addresses', { body })
+      setEditing(null)
+    })
+  }
+
+  const set = (patch: Partial<AddressDraft>) => {
+    setForm((current) => ({ ...current, ...patch }))
+    setFieldErrors((current) => {
+      const next = { ...current }
+      for (const key of Object.keys(patch) as (keyof AddressDraft)[]) delete next[key]
+      return next
+    })
+  }
+
+  const states = form.state && !indianStates.includes(form.state) ? [form.state, ...indianStates] : indianStates
+
   return (
-    <Panel title="Addresses" text="Your default address is filled in at checkout.">
+    <Panel title="Manage addresses" text="Saved addresses are filled in at checkout. Your default is used first.">
       {query.isLoading && <p className="mb-4 text-sm text-muted">Loading your addresses…</p>}
-      {!query.isLoading && list.length === 0 && !draft && (
-        <p className="mb-4 text-sm text-muted">No saved addresses yet. Add one so checkout is faster.</p>
-      )}
-      <ul className="space-y-2">
-        {list.map((item) => (
-          <li key={item.id} className="flex flex-wrap items-start gap-3 rounded-xl border border-line px-3 py-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold">
-                {item.name}
-                <span className="ml-2 rounded-full bg-canvas px-2 py-0.5 text-[10px] font-bold text-muted ring-1 ring-line">{addressLabels[item.label] ?? 'Home'}</span>
-                {item.isDefault && <span className="ml-2 rounded-full bg-brand-soft px-2 py-0.5 text-[10px] font-bold text-brand">Default</span>}
-              </p>
-              <p className="mt-1 text-sm text-ink">+91 {item.phone}</p>
-              <p className="text-sm text-muted">{item.line}, {item.city}, {item.state} {item.pin}</p>
-              {item.landmark && <p className="text-xs text-muted">Landmark: {item.landmark}</p>}
-            </div>
-            <div className="flex gap-2">
-              {!item.isDefault && (
-                <button type="button" disabled={busy} className="text-xs font-semibold text-brand" onClick={() => void run(() => api(`/me/addresses/${item.id}/default`, { method: 'POST' }))}>
-                  Make default
-                </button>
-              )}
-              <button type="button" className="text-xs font-semibold text-ink" onClick={() => { setDraft(item); setError('') }}>Edit</button>
-              <button type="button" disabled={busy} className="text-xs font-semibold text-rose-600" onClick={() => void run(() => api(`/me/addresses/${item.id}`, { method: 'DELETE' }))}>
-                Remove
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
-      {!draft ? (
-        <button type="button" className="btn btn-outline btn-sm mt-4" onClick={() => { setDraft({ ...emptyAddress(), name: user?.name ?? '', isDefault: list.length === 0 }); setError('') }}>
-          Add address
-        </button>
-      ) : (
-        <form onSubmit={saveDraft} className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-2">
-          <Field label="Full name">
-            <input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} className="field" />
-          </Field>
-          <Field label="Mobile">
-            <input required value={draft.phone} inputMode="numeric" maxLength={10} onChange={(event) => setDraft({ ...draft, phone: event.target.value.replace(/\D/g, '') })} className="field" />
-          </Field>
-          <Field label="Address" className="sm:col-span-2">
-            <textarea required rows={2} value={draft.line} onChange={(event) => setDraft({ ...draft, line: event.target.value })} className="field" />
-          </Field>
-          <Field label="PIN code">
-            <input required value={draft.pin} inputMode="numeric" maxLength={6} onChange={(event) => setDraft({ ...draft, pin: event.target.value.replace(/\D/g, '') })} className="field" />
-          </Field>
-          <Field label="City">
-            <input required value={draft.city} onChange={(event) => setDraft({ ...draft, city: event.target.value })} className="field" />
-          </Field>
-          <Field label="State">
-            <select value={draft.state} onChange={(event) => setDraft({ ...draft, state: event.target.value })} className="field">
-              {indianStates.map((state) => <option key={state}>{state}</option>)}
-            </select>
-          </Field>
-          <Field label="Landmark (optional)">
-            <input value={draft.landmark ?? ''} maxLength={120} onChange={(event) => setDraft({ ...draft, landmark: event.target.value })} className="field" placeholder="Near the temple" />
-          </Field>
-          <div className="sm:col-span-2">
-            <span className="text-[13px] font-bold text-ink-soft">Address type</span>
-            <div className="mt-1.5 flex gap-2">
-              {(['HOME', 'WORK', 'OTHER'] as const).map((label) => (
-                <button key={label} type="button" aria-pressed={draft.label === label} onClick={() => setDraft({ ...draft, label })} className={`rounded-full border-2 px-4 py-1.5 text-sm font-bold transition ${draft.label === label ? 'border-brand bg-brand-soft text-brand' : 'border-line hover:border-brand/40'}`}>
-                  {addressLabels[label]}
-                </button>
-              ))}
+
+      {editing ? (
+        <form onSubmit={save} className="rounded-2xl border border-line bg-canvas/70 p-4 sm:p-5">
+          <p className="text-xs font-extrabold tracking-wide text-brand uppercase">{editing === 'new' ? 'Add a new address' : 'Edit address'}</p>
+          <button type="button" onClick={useCurrentLocation} disabled={locating} className="btn btn-brand btn-sm mt-3">
+            <PinIcon className="size-4" /> {locating ? 'Finding you…' : 'Use my current location'}
+          </button>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <AddressField label="Name" error={fieldErrors.name}>
+              <input value={form.name} onChange={(event) => set({ name: event.target.value })} className="field" autoComplete="name" placeholder="Name" />
+            </AddressField>
+            <AddressField label="10-digit mobile number" error={fieldErrors.phone}>
+              <input inputMode="numeric" maxLength={10} value={form.phone} onChange={(event) => set({ phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} className="field" autoComplete="tel" placeholder="10-digit mobile number" />
+            </AddressField>
+            <AddressField label="Pincode" error={fieldErrors.pin}>
+              <input inputMode="numeric" maxLength={6} value={form.pin} onChange={(event) => set({ pin: event.target.value.replace(/\D/g, '').slice(0, 6) })} className="field" autoComplete="postal-code" placeholder="Pincode" />
+            </AddressField>
+            <AddressField label="Locality" error={fieldErrors.locality}>
+              <input value={form.locality} onChange={(event) => set({ locality: event.target.value })} className="field" placeholder="Locality" />
+            </AddressField>
+            <AddressField label="Address (area and street)" error={fieldErrors.line} className="sm:col-span-2">
+              <textarea value={form.line} onChange={(event) => set({ line: event.target.value })} rows={2} className="field resize-none" placeholder="House no., building, street" />
+            </AddressField>
+            <AddressField label="City / district / town" error={fieldErrors.city}>
+              <input value={form.city} onChange={(event) => set({ city: event.target.value })} className="field" autoComplete="address-level2" placeholder="City" />
+            </AddressField>
+            <AddressField label="State" error={fieldErrors.state}>
+              <select value={form.state} onChange={(event) => set({ state: event.target.value })} className="field">
+                <option value="">Select state</option>
+                {states.map((state) => <option key={state}>{state}</option>)}
+              </select>
+            </AddressField>
+            <AddressField label="Landmark (optional)">
+              <input value={form.landmark} onChange={(event) => set({ landmark: event.target.value })} className="field" placeholder="Nearby landmark" />
+            </AddressField>
+            <div>
+              <span className="text-xs font-bold text-ink">Address type</span>
+              <div className="mt-2 flex flex-wrap gap-4">
+                {(['HOME', 'WORK', 'OTHER'] as const).map((kind) => (
+                  <label key={kind} className="inline-flex items-center gap-2 text-sm font-semibold">
+                    <input type="radio" name="address-type" checked={form.label === kind} onChange={() => set({ label: kind })} className="accent-brand" />
+                    {addressLabels[kind]}
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
-          <label className="flex items-center gap-2 text-sm font-semibold sm:col-span-2">
-            <input type="checkbox" checked={draft.isDefault} onChange={(event) => setDraft({ ...draft, isDefault: event.target.checked })} /> Use as my default address
+          <label className="mt-3 flex items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" checked={form.isDefault} onChange={(event) => set({ isDefault: event.target.checked })} className="accent-brand" />
+            Use as my default address
           </label>
-          {error && <p role="alert" className="text-sm font-semibold text-rose-600 sm:col-span-2">{error}</p>}
-          <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
-            <button type="submit" disabled={busy} className="btn btn-accent btn-sm">Save address</button>
-            <button type="button" className="btn btn-outline btn-sm" onClick={() => setDraft(null)}>Cancel</button>
+          {error && <p role="alert" className="mt-3 text-sm font-semibold text-rose-600">{error}</p>}
+          <div className="mt-4 flex items-center gap-4">
+            <button type="submit" disabled={busy} className="btn btn-brand px-8">{busy ? 'Saving…' : 'Save'}</button>
+            <button type="button" onClick={() => setEditing(null)} className="text-sm font-extrabold tracking-wide text-brand uppercase">Cancel</button>
           </div>
         </form>
+      ) : (
+        <button type="button" onClick={() => openForm('new')} className="btn btn-outline">Add a new address</button>
       )}
-      {!draft && error && <p role="alert" className="mt-3 text-sm font-semibold text-rose-600">{error}</p>}
+
+      {list.length > 0 && (
+        <ul className={`${editing ? 'mt-5 border-t border-line pt-5' : 'mt-5'} space-y-3`}>
+          {list.map((item) => (
+            <li key={item.id} className="rounded-2xl border border-line bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="rounded-md bg-canvas px-2 py-0.5 text-[10px] font-extrabold tracking-wide text-muted uppercase">{addressLabels[item.label]}</span>
+                  {item.isDefault && <span className="rounded-md bg-brand-soft px-2 py-0.5 text-[10px] font-extrabold tracking-wide text-brand uppercase">Default</span>}
+                </div>
+                <div className="flex gap-3">
+                  {!item.isDefault && (
+                    <button type="button" disabled={busy} className="text-xs font-bold text-brand" onClick={() => void run(() => api(`/me/addresses/${item.id}/default`, { method: 'POST' }))}>
+                      Make default
+                    </button>
+                  )}
+                  <button type="button" className="text-xs font-bold text-ink" onClick={() => openForm(item)}>Edit</button>
+                  <button type="button" disabled={busy} className="text-xs font-bold text-rose-600" onClick={() => void run(() => api(`/me/addresses/${item.id}`, { method: 'DELETE' }))}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+              <p className="mt-3 text-sm font-bold">
+                {item.name}
+                <span className="ml-3 font-semibold text-ink">{item.phone}</span>
+              </p>
+              <p className="mt-1 max-w-xl text-sm leading-relaxed text-muted">{item.line}, {item.city}, {item.state} — {item.pin}</p>
+              {item.landmark && <p className="mt-1 text-xs text-muted">Landmark: {item.landmark}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!editing && !query.isLoading && list.length === 0 && (
+        <p className="mt-4 text-sm text-muted">No saved addresses yet.</p>
+      )}
+      {!editing && error && <p role="alert" className="mt-3 text-sm font-semibold text-rose-600">{error}</p>}
     </Panel>
+  )
+}
+
+function AddressField({ label, error, className = '', children }: { label: string; error?: string; className?: string; children: ReactNode }) {
+  return (
+    <label className={`block text-xs font-bold text-ink ${className}`}>
+      {label}
+      <span className="mt-1.5 block font-normal">{children}</span>
+      {error && <span className="mt-1 block text-xs font-semibold text-rose-600">{error}</span>}
+    </label>
   )
 }
 

@@ -18,7 +18,7 @@ export function OrderSummary({
   children?: React.ReactNode
 }) {
   const { user } = useAuth()
-  const { lines, subtotal, discount, shipping, total, coupon, savings, pricing, applyCoupon, clearCoupon } = useCart()
+  const { lines, count, subtotal, discount, shipping, total, coupon, savings, pricing, applyCoupon, clearCoupon } = useCart()
   const settings = useStoreSettings()
   const available = useActiveCoupons().data ?? []
   const [applying, setApplying] = useState(false)
@@ -140,9 +140,9 @@ export function OrderSummary({
         <Link
           to={user ? '/checkout' : '/login'}
           state={user ? undefined : { from: '/checkout' }}
-          className={`btn btn-lg mt-5 w-full ${lines.length === 0 ? 'pointer-events-none bg-slate-300 text-white' : 'btn-accent'}`}
+          className={`btn btn-lg mt-5 w-full ${count === 0 ? 'pointer-events-none bg-slate-300 text-white' : 'btn-accent'}`}
         >
-          <LockIcon className="size-4" /> {user ? 'Secure checkout' : 'Login to checkout'}
+          <LockIcon className="size-4" /> {user ? 'Proceed to checkout' : 'Login to checkout'}
         </Link>
       )}
       {children}

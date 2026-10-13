@@ -2,7 +2,8 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { findAccountById } from '../lib/account.js'
 import { from, db, maybe, rows, type Row  } from '../lib/db.js'
-import { notFound } from '../lib/errors.js'
+import { badRequest, notFound } from '../lib/errors.js'
+import { reviewImageUpload, storeImage } from '../lib/storage.js'
 import { buildQuote, loadActiveOffers } from '../lib/pricing.js'
 import { serializeProduct } from '../lib/serializers.js'
 import { getSettings } from '../lib/settings.js'
@@ -109,10 +110,26 @@ catalogRouter.get('/products/:slug/reviews', async (req, res) => {
   res.json({ items })
 })
 
+catalogRouter.post('/products/:slug/review-images', requireAuth, reviewImageUpload.array('images', 4), async (req, res) => {
+  const files = (req.files ?? []) as Express.Multer.File[]
+  if (!files.length) throw badRequest('Choose a JPG, PNG or WebP photo')
+  const urls: string[] = []
+  for (const file of files) urls.push(await storeImage(file, 'review'))
+  res.status(201).json({ urls })
+})
+
 catalogRouter.post('/products/:slug/reviews', requireAuth, async (req, res) => {
   const data = z
-    .object({ rating: z.number().int().min(1).max(5), comment: z.string().trim().min(5).max(1000), city: z.string().trim().max(60).optional() })
+    .object({
+      rating: z.number().int().min(1).max(5),
+      comment: z.string().trim().min(5).max(1000),
+      city: z.string().trim().max(60).optional(),
+      images: z.array(z.string().trim().max(500)).max(4).default([]),
+    })
     .parse(req.body)
+  if (data.images.some((url) => !url.startsWith('/uploads/review-images/') && !url.includes('/storage/v1/object/public/review-images/'))) {
+    throw badRequest('Review photos must be uploaded from this page')
+  }
   const product = await maybe<{ id: string }>(from('Product').select('id').eq('slug', String(req.params.slug)).maybeSingle())
   if (!product) throw notFound('Product')
   const userId = actor(req).id
@@ -124,7 +141,16 @@ catalogRouter.post('/products/:slug/reviews', requireAuth, async (req, res) => {
     ? (await rows(from('OrderItem').select('id').eq('productId', product.id).in('orderId', orders.map((order) => order.id)).limit(1))).length > 0
     : false
   const review = await rows(
-    from('Review').insert({ productId: product.id, userId, name: user.name, city: data.city ?? 'India', rating: data.rating, comment: data.comment, verified: purchased }).select(),
+    from('Review').insert({
+      productId: product.id,
+      userId,
+      name: user.name,
+      city: data.city ?? 'India',
+      rating: data.rating,
+      comment: data.comment,
+      verified: purchased,
+      ...(data.images.length ? { images: data.images } : {}),
+    }).select(),
   )
   res.status(201).json({ review: review[0], message: 'Thanks! Your review will appear once it is approved.' })
 })

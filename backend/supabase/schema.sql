@@ -9,6 +9,8 @@
 --   1. Supabase dashboard -> SQL Editor -> New query -> paste this whole file -> Run.
 --      Safe to run again. Tables already in public are moved into the schemas
 --      below. Products, orders and customers are kept.
+--      A later change also has its own file under backend/supabase/migrations/.
+--      Paste that smaller file when you only need the new table or column.
 --   2. Project Settings -> Data API -> Exposed schemas: add
 --      account, catalog, marketing, sales, payment, ops
 --      (public can stay). Save. The SQL also tries to set this for you.
@@ -113,6 +115,7 @@ BEGIN
 END $$;
 
 -- Payment tables used to sit in sales / account. Move them into the payment schema (rows kept).
+-- Incremental paste: backend/supabase/migrations/2026-10-12-payment-schema.sql
 DO $$
 DECLARE r RECORD;
 BEGIN
@@ -316,6 +319,27 @@ CREATE TABLE IF NOT EXISTS account."Address" (
     "isDefault" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "Address_pkey" PRIMARY KEY ("id")
+);
+
+-- DeliveryLocation: the spot a signed-in customer picked in the header "Set PIN" map.
+-- One row per login. Guests keep theirs in the browser only.
+-- Incremental paste: backend/supabase/migrations/2026-10-12-delivery-location.sql
+CREATE TABLE IF NOT EXISTS account."DeliveryLocation" (
+    "userId" TEXT NOT NULL,
+    "pin" TEXT NOT NULL,
+    "city" TEXT,
+    "state" TEXT,
+    "area" TEXT,
+    "label" TEXT,
+    "lat" DOUBLE PRECISION,
+    "lng" DOUBLE PRECISION,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "DeliveryLocation_pkey" PRIMARY KEY ("userId"),
+    CONSTRAINT "DeliveryLocation_userId_fkey" FOREIGN KEY ("userId") REFERENCES account."Login"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "DeliveryLocation_pin_check" CHECK ("pin" ~ '^[0-9]{6}$'),
+    CONSTRAINT "DeliveryLocation_lat_check" CHECK ("lat" IS NULL OR "lat" BETWEEN -90 AND 90),
+    CONSTRAINT "DeliveryLocation_lng_check" CHECK ("lng" IS NULL OR "lng" BETWEEN -180 AND 180)
 );
 
 -- SavedPayment: UPI IDs and cards a customer chose to keep for next time.
@@ -715,6 +739,7 @@ CREATE TABLE IF NOT EXISTS catalog."Review" (
     "comment" TEXT NOT NULL,
     "verified" BOOLEAN NOT NULL DEFAULT false,
     "status" "ReviewStatus" NOT NULL DEFAULT 'PENDING',
+    "images" TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Review_pkey" PRIMARY KEY ("id")
@@ -782,6 +807,7 @@ ALTER TABLE catalog."ProductVariant" ADD COLUMN IF NOT EXISTS "weightGrams" INTE
 
 ALTER TABLE sales."OrderItem" ADD COLUMN IF NOT EXISTS "hsnCode" TEXT;
 ALTER TABLE sales."OrderItem" ADD COLUMN IF NOT EXISTS "gstPercent" INTEGER;
+ALTER TABLE catalog."Review" ADD COLUMN IF NOT EXISTS "images" TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
 
 -- List columns must be empty arrays, never NULL.
 DO $$
@@ -1468,6 +1494,7 @@ ALTER TABLE account."Admin" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE account."RefreshToken" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE account."PasswordReset" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE account."Address" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE account."DeliveryLocation" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payment."SavedPayment" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payment."WebhookEvent" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog."Category" ENABLE ROW LEVEL SECURITY;
@@ -1562,6 +1589,7 @@ COMMENT ON TABLE account."Admin" IS 'Admin profile. Full access comes from Login
 COMMENT ON TABLE catalog."Brand" IS 'Product brand, for example ClickMart.';
 COMMENT ON TABLE catalog."Category" IS 'Catalogue tree. parentId null is a department; a row with parentId is a subcategory. id is the public slug.';
 COMMENT ON TABLE catalog."Product" IS 'A sellable item. Price and stock live on ProductVariant, photos on ProductImage.';
+COMMENT ON COLUMN catalog."Review"."images" IS 'Up to four photo URLs a customer attached. Empty until they upload some.';
 COMMENT ON COLUMN catalog."Product"."hsnCode" IS 'Indian HSN code used on the tax invoice.';
 COMMENT ON COLUMN catalog."Product"."gstPercent" IS 'GST percent for this product. Dry fruits are usually 5.';
 COMMENT ON TABLE catalog."ProductImage" IS 'Ordered product photos. The images array on Product is a copy kept in sync by set_product_images.';
@@ -1614,6 +1642,7 @@ ON CONFLICT ("code") DO NOTHING;
 --   category-images  category photos
 --   banner-images    homepage banners
 --   profile-images   customer, staff and admin profile photos
+--   review-images    photos customers attach to a review
 -- Skipped on plain Postgres (the local test stack), which uses backend/uploads.
 -- ============================================================================
 
@@ -1625,7 +1654,8 @@ BEGIN
       ('product-images',  'product-images',  true, 5242880, ARRAY['image/jpeg','image/png','image/webp']),
       ('category-images', 'category-images', true, 5242880, ARRAY['image/jpeg','image/png','image/webp']),
       ('banner-images',   'banner-images',   true, 5242880, ARRAY['image/jpeg','image/png','image/webp']),
-      ('profile-images',  'profile-images',  true, 5242880, ARRAY['image/jpeg','image/png','image/webp'])
+      ('profile-images',  'profile-images',  true, 5242880, ARRAY['image/jpeg','image/png','image/webp']),
+      ('review-images',   'review-images',   true, 5242880, ARRAY['image/jpeg','image/png','image/webp'])
     ON CONFLICT (id) DO UPDATE
       SET public = true,
           file_size_limit = EXCLUDED.file_size_limit,

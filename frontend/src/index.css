@@ -332,6 +332,11 @@ textarea {
   animation: sheet 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
+.map-picker .maplibregl-ctrl-bottom-right {
+  bottom: 7.25rem;
+  right: 0.5rem;
+}
+
 .motion-toast {
   animation: toast-in 0.32s ease both;
 }

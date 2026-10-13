@@ -29,6 +29,7 @@ type Options = {
   method?: string
   body?: unknown
   form?: FormData
+  signal?: AbortSignal
   query?: Record<string, string | number | boolean | string[] | undefined | null>
 }
 
@@ -67,13 +68,15 @@ export async function api<T = unknown>(path: string, options: Options = {}, retr
     response = await fetch(BASE ? url.toString() : `${url.pathname}${url.search}`, {
       method: options.method ?? (options.body || options.form ? 'POST' : 'GET'),
       credentials: 'include',
+      signal: options.signal,
       headers: {
         ...(options.body ? { 'Content-Type': 'application/json' } : {}),
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
       body: options.form ?? (options.body ? JSON.stringify(options.body) : undefined),
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
     throw new ApiError(0, 'Cannot reach the server. Check your connection and try again.')
   }
 

@@ -14,16 +14,26 @@ export const imageBuckets = {
   category: 'category-images',
   banner: 'banner-images',
   profile: 'profile-images',
+  review: 'review-images',
 } as const
 
 export type ImagePurpose = keyof typeof imageBuckets
 
 const extensions: Record<string, string> = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' }
 
+const imageFilter: multer.Options['fileFilter'] = (_req, file, cb) => (extensions[file.mimetype] ? cb(null, true) : cb(badRequest('Only JPG, PNG or WebP images are allowed')))
+
 export const imageUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024, files: 1 },
-  fileFilter: (_req, file, cb) => (extensions[file.mimetype] ? cb(null, true) : cb(badRequest('Only JPG, PNG or WebP images are allowed'))),
+  fileFilter: imageFilter,
+})
+
+/** Up to four customer photos on one review. */
+export const reviewImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 4 },
+  fileFilter: imageFilter,
 })
 
 /** Saves one image and returns the URL to store on the record. */

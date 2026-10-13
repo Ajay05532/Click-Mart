@@ -57,7 +57,7 @@ export const useCategories = () =>
     refetchOnWindowFocus: true,
   })
 
-export type ProductReview = { id: string; name: string; city: string; rating: number; comment: string; verified: boolean; createdAt: string }
+export type ProductReview = { id: string; name: string; city: string; rating: number; comment: string; images?: string[]; verified: boolean; createdAt: string }
 export const useProductReviews = (slug: string) =>
   useQuery({ queryKey: ['reviews', slug], queryFn: () => api<{ items: ProductReview[] }>(`/products/${slug}/reviews`).then((result) => result.items) })
 

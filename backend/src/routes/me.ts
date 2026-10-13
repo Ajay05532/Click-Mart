@@ -6,6 +6,7 @@ import { badRequest, notFound } from '../lib/errors.js'
 import { imageUpload, storeImage } from '../lib/storage.js'
 import { actor, requireAuth } from '../middleware/auth.js'
 import { publicUser } from './auth.js'
+import { locationRouter } from './location.js'
 import { walletRouter } from './wallet.js'
 
 export const meRouter = Router()
@@ -90,6 +91,7 @@ meRouter.delete('/addresses/:id', async (req, res) => {
   res.status(204).end()
 })
 
+meRouter.use('/location', locationRouter)
 meRouter.use(walletRouter)
 
 // Wishlist

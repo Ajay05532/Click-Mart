@@ -20,9 +20,17 @@ export function StoreLayout() {
       </main>
       <Footer />
       {toast && (
-        <div key={toastTick} className="motion-toast fixed right-4 bottom-4 z-50 max-w-xs rounded-2xl bg-ink px-5 py-4 text-sm text-white shadow-pop">
-          <p className="flex items-center gap-2 font-semibold"><span className="grid size-5 place-items-center rounded-full bg-success text-[11px]">✓</span>{toast}</p>
-          <Link to="/cart" className="mt-1.5 inline-block font-bold text-orange-300 hover:text-orange-200">
+        <div key={toastTick} role="status" className="motion-toast fixed top-20 right-4 z-50 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-line bg-white p-4 text-ink shadow-pop">
+          <p className="flex items-center gap-2 text-sm font-extrabold">
+            <span className="grid size-6 place-items-center rounded-full bg-success text-xs text-white">✓</span>
+            {toast.text}
+          </p>
+          {toast.count != null && (
+            <p className="mt-1 pl-8 text-sm text-muted">
+              Cart now has <span className="font-extrabold text-ink">{toast.count}</span> {toast.count === 1 ? 'item' : 'items'}
+            </p>
+          )}
+          <Link to="/cart" className="btn btn-accent btn-sm mt-3 w-full">
             View cart
           </Link>
         </div>

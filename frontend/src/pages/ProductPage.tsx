@@ -7,18 +7,30 @@ import { ProductMedia } from '../components/product/ProductMedia.tsx'
 import { Breadcrumbs } from '../components/ui/Breadcrumbs.tsx'
 import { QuantityInput } from '../components/ui/QuantityInput.tsx'
 import { Stars } from '../components/ui/Stars.tsx'
-import { HeartIcon, LeafIcon, ShieldIcon, TruckIcon } from '../components/icons.tsx'
+import { HeartIcon, LeafIcon, PinIcon, ShieldIcon, TruckIcon } from '../components/icons.tsx'
 import { Badge } from '../components/ui/Primitives.tsx'
+import { useDeliveryLocation } from '../context/LocationContext.tsx'
 import { useWishlist } from '../context/WishlistContext.tsx'
 import { useCart } from '../context/CartContext.tsx'
 import { useAuth } from '../context/AuthContext.tsx'
 import { api, errorMessage } from '../lib/api.ts'
-import { useProduct, useProductReviews } from '../lib/catalog.ts'
+import { useProduct, useProductReviews, useStoreSettings } from '../lib/catalog.ts'
 import { discountPercent, formatPrice } from '../lib/money.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 import type { Product } from '../types.ts'
 
 const tabs = ['Description', 'Nutrition Facts', 'Reviews'] as const
+
+/** Four working days from today, skipping Sundays. Shown as "22 Oct". */
+function deliveryBy(from = new Date()) {
+  const date = new Date(from)
+  let added = 0
+  while (added < 4) {
+    date.setDate(date.getDate() + 1)
+    if (date.getDay() !== 0) added += 1
+  }
+  return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+}
 
 export function ProductPage() {
   const { slug = '' } = useParams()
@@ -58,15 +70,27 @@ export function ProductPage() {
 }
 
 function ProductDetails({ product, related }: { product: Product; related: Product[] }) {
-  const { addItem } = useCart()
+  const { addItem, updateQty, items } = useCart()
+  const { location: delivery, openPicker } = useDeliveryLocation()
+  const settings = useStoreSettings()
   const wishlist = useWishlist()
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const requested = params.get('size')
   const pack = product.packs.find((item) => item.size === requested) ?? product.packs.find((item) => item.size === product.featuredSize) ?? product.packs[0]!
-  const [qty, setQty] = useState(1)
+  const inCart = items.find((item) => item.variantId === pack.variantId)?.quantity ?? 0
+  const [pending, setPending] = useState(1)
+  const qty = inCart > 0 ? inCart : pending
+  const photos = product.images?.length ? product.images : product.image ? [product.image] : []
+  const [photo, setPhoto] = useState(0)
+  const [reviewPhotos, setReviewPhotos] = useState<File[]>([])
+  const shown = photos[photo] ?? null
+  const changeQty = (next: number) => {
+    if (inCart > 0) updateQty(pack.variantId, next)
+    else setPending(next)
+  }
   const chooseSize = (next: string) => {
-    setQty(1)
+    setPending(1)
     const nextParams = new URLSearchParams(params)
     nextParams.set('size', next)
     setParams(nextParams, { replace: true })
@@ -99,14 +123,32 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
           ]}
         />
         <div className="card mt-4 grid gap-8 p-4 md:p-7 lg:grid-cols-[minmax(0,480px)_1fr]">
-          <div className="group relative h-fit overflow-hidden rounded-3xl bg-canvas lg:sticky lg:top-32">
-            {off > 0 && <span className="absolute top-4 left-4 z-10 rounded-full bg-accent px-3 py-1.5 text-xs font-extrabold text-white shadow-md">{off}% OFF</span>}
-            <ProductMedia
-              name={product.name}
-              image={product.image}
-              art={product.art}
-              className="motion-zoom aspect-square w-full"
-            />
+          <div className="h-fit lg:sticky lg:top-32">
+            <div className="group relative overflow-hidden rounded-3xl bg-canvas">
+              {off > 0 && <span className="absolute top-4 left-4 z-10 rounded-full bg-accent px-3 py-1.5 text-xs font-extrabold text-white shadow-md">{off}% OFF</span>}
+              <ProductMedia
+                name={product.name}
+                image={shown}
+                art={product.art}
+                className="aspect-square w-full"
+              />
+            </div>
+            {photos.length > 1 && (
+              <div className="mt-3 flex gap-2 overflow-x-auto">
+                {photos.map((src, index) => (
+                  <button
+                    key={src}
+                    type="button"
+                    aria-label={`Photo ${index + 1}`}
+                    aria-pressed={index === photo}
+                    onClick={() => setPhoto(index)}
+                    className={`size-16 shrink-0 overflow-hidden rounded-xl border-2 bg-canvas ${index === photo ? 'border-brand' : 'border-transparent'}`}
+                  >
+                    <img src={src} alt="" className="size-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -144,20 +186,20 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
               ))}
             </div>
             <div className="mt-5 flex flex-wrap items-center gap-3">
-              <QuantityInput value={qty} max={Math.max(packStock, 1)} onChange={setQty} />
+              <QuantityInput value={qty} max={Math.max(packStock, 1)} onChange={changeQty} />
               <button
                 type="button"
-                disabled={!packInStock}
-                onClick={() => addItem(pack.variantId, qty, product.name)}
+                disabled={!packInStock || inCart > 0}
+                onClick={() => addItem(pack.variantId, pending, product.name)}
                 className="btn btn-accent btn-lg"
               >
-                Add to Cart
+                {inCart > 0 ? 'In cart' : 'Add to Cart'}
               </button>
               <button
                 type="button"
                 disabled={!packInStock}
                 onClick={() => {
-                  addItem(pack.variantId, qty, product.name)
+                  if (inCart === 0) addItem(pack.variantId, pending, product.name)
                   if (user) navigate('/checkout')
                   else navigate('/login', { state: { from: '/checkout' } })
                 }}
@@ -178,6 +220,35 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
               </button>
             </div>
             {!product.inStock && <p className="mt-3 text-sm font-medium text-rose-600">Currently out of stock.</p>}
+            <div className="mt-6 space-y-2">
+              <p className="text-sm font-extrabold">Delivery details</p>
+              <button type="button" onClick={openPicker} className="flex w-full items-center gap-3 rounded-2xl bg-brand-soft px-4 py-3 text-left text-sm">
+                <PinIcon className="size-5 shrink-0 text-ink" />
+                {delivery ? <span className="font-extrabold">{delivery.pin}</span> : null}
+                <span className="font-bold text-brand">{delivery ? 'Change delivery location' : 'Select delivery location'} ›</span>
+              </button>
+              {packInStock && (
+                <div className="flex items-center gap-3 rounded-2xl bg-canvas px-4 py-3 text-sm">
+                  <TruckIcon className="size-5 shrink-0 text-ink" />
+                  <p>
+                    Delivery by <span className="font-extrabold">{deliveryBy()}</span>
+                    {pack.price >= settings.freeShippingThreshold && <span className="text-success"> · Free delivery</span>}
+                  </p>
+                </div>
+              )}
+              <div className="flex items-center gap-3 rounded-2xl bg-canvas px-4 py-3 text-sm">
+                <span className="grid size-5 shrink-0 place-items-center text-ink" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 9h16v10H4z" />
+                    <path d="M8 9V7a4 4 0 0 1 8 0v2" />
+                  </svg>
+                </span>
+                <p>
+                  Sold by <span className="font-extrabold">ClickMart</span>
+                  <span className="block text-xs text-muted">{product.rating}★ · packed and shipped by us</span>
+                </p>
+              </div>
+            </div>
             <div className="mt-7 grid gap-3 text-center text-sm sm:grid-cols-3">
               {[
                 { icon: TruckIcon, title: 'Free Shipping', text: 'On orders above ₹499' },
@@ -250,6 +321,15 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
                       <Stars value={review.rating} className="size-3.5" />
                     </div>
                     <p className="mt-2 text-sm text-muted">{review.comment}</p>
+                    {!!review.images?.length && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {review.images.map((src) => (
+                          <a key={src} href={src} target="_blank" rel="noreferrer" className="size-16 overflow-hidden rounded-lg bg-canvas ring-1 ring-line">
+                            <img src={src} alt="" className="size-full object-cover" />
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </article>
                 ))}
               </div>
@@ -261,9 +341,16 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
                   setReviewBusy(true)
                   setReviewError('')
                   try {
-                    const result = await api<{ message: string }>(`/products/${product.slug}/reviews`, { body: { rating: reviewForm.rating, comment: reviewForm.comment.trim() } })
+                    let images: string[] = []
+                    if (reviewPhotos.length) {
+                      const form = new FormData()
+                      reviewPhotos.forEach((file) => form.append('images', file))
+                      images = (await api<{ urls: string[] }>(`/products/${product.slug}/review-images`, { form })).urls
+                    }
+                    const result = await api<{ message: string }>(`/products/${product.slug}/reviews`, { body: { rating: reviewForm.rating, comment: reviewForm.comment.trim(), images } })
                     setReviewMessage(result.message)
                     setReviewForm({ rating: 5, comment: '' })
+                    setReviewPhotos([])
                     void queryClient.invalidateQueries({ queryKey: ['reviews', product.slug] })
                   } catch (error) {
                     setReviewError(errorMessage(error))
@@ -302,6 +389,27 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
                       placeholder="How was it?"
                       className="field mt-3 h-24"
                     />
+                    <label className="mt-3 block text-sm font-semibold">
+                      Photos
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        multiple
+                        className="mt-1 block w-full text-xs font-normal text-muted file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-brand"
+                        onChange={(event) => {
+                          const next = [...(event.target.files ?? [])].slice(0, 4)
+                          const bad = next.find((file) => file.size > 5 * 1024 * 1024)
+                          if (bad) {
+                            setReviewError('Each photo must be under 5 MB')
+                            event.target.value = ''
+                            return
+                          }
+                          setReviewError('')
+                          setReviewPhotos(next)
+                        }}
+                      />
+                    </label>
+                    {reviewPhotos.length > 0 && <p className="mt-1 text-xs text-muted">{reviewPhotos.length} of 4 photos selected</p>}
                     {reviewError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-600">{reviewError}</p>}
                     <button type="submit" disabled={reviewBusy} className="btn btn-brand mt-3 w-full">
                       Submit review

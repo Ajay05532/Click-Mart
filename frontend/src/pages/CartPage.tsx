@@ -8,18 +8,22 @@ import { Breadcrumbs } from '../components/ui/Breadcrumbs.tsx'
 import { EmptyState, Stepper } from '../components/ui/Primitives.tsx'
 import { QuantityInput } from '../components/ui/QuantityInput.tsx'
 import { useCart } from '../context/CartContext.tsx'
+import { useAuth } from '../context/AuthContext.tsx'
+import { useDeliveryLocation } from '../context/LocationContext.tsx'
 import { useProducts } from '../lib/catalog.ts'
 import { discountPercent, formatPrice } from '../lib/money.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function CartPage() {
   useDocumentTitle('Your Cart')
-  const { lines, count, pricing, updateQty, removeItem } = useCart()
+  const { user } = useAuth()
+  const { lines, count, total, pricing, quoteError, reloadQuote, updateQty, removeItem } = useCart()
+  const { location: delivery } = useDeliveryLocation()
   const popular = useProducts({ sort: 'popular', pageSize: 12 })
   const suggestions = (popular.data?.items ?? []).filter((product) => product.inStock && !lines.some((line) => line.productId === product.id)).slice(0, 4)
 
   return (
-    <div className="bg-canvas">
+    <div className="bg-canvas pb-24 lg:pb-0">
       <Container className="py-8 sm:py-10">
         <Breadcrumbs items={[{ label: 'Home', to: '/' }, { label: 'Cart' }]} />
         <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
@@ -41,13 +45,28 @@ export function CartPage() {
               action={{ to: '/shop', label: 'Start shopping' }}
             />
           </div>
-        ) : lines.length === 0 && pricing ? (
-          <div className="grid min-h-60 place-items-center">
-            <span className="motion-spin block size-10 rounded-full border-4 border-brand-soft border-t-brand" role="status" aria-label="Loading your cart" />
+        ) : lines.length === 0 ? (
+          <div className="grid min-h-60 place-items-center px-6 text-center">
+            {quoteError ? (
+              <div>
+                <p className="font-semibold text-rose-600">{quoteError}</p>
+                <button type="button" onClick={reloadQuote} className="btn btn-accent mt-4">
+                  Try again
+                </button>
+              </div>
+            ) : (
+              <span className="motion-spin block size-10 rounded-full border-4 border-brand-soft border-t-brand" role="status" aria-label="Loading your cart" />
+            )}
           </div>
         ) : (
           <div className="mt-8 grid items-start gap-6 lg:grid-cols-[1fr_380px]">
             <div className="space-y-4">
+              {delivery && (
+                <p className="flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-white px-4 py-3 text-sm">
+                  <span className="text-muted">Delivering to</span>
+                  <span className="font-extrabold">{delivery.city ? `${delivery.city} ` : ''}{delivery.pin}</span>
+                </p>
+              )}
               <ul className="stagger space-y-4">
                 {lines.map((line) => {
                   const off = discountPercent(line.unitPrice, line.mrp)
@@ -105,6 +124,24 @@ export function CartPage() {
               </Link>
             </div>
             <OrderSummary showCheckout />
+          </div>
+        )}
+
+        {count > 0 && (
+          <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/95 p-4 shadow-[0_-10px_30px_-12px_rgb(21_32_51/0.2)] backdrop-blur lg:hidden">
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-muted">{count} {count === 1 ? 'item' : 'items'}</p>
+                <p className="text-lg font-extrabold">{pricing ? '…' : formatPrice(total)}</p>
+              </div>
+              <Link
+                to={user ? '/checkout' : '/login'}
+                state={user ? undefined : { from: '/checkout' }}
+                className="btn btn-accent btn-lg"
+              >
+                Checkout
+              </Link>
+            </div>
           </div>
         )}
 

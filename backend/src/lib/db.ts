@@ -17,6 +17,7 @@ const tableSchema = {
   RefreshToken: 'account',
   PasswordReset: 'account',
   Address: 'account',
+  DeliveryLocation: 'account',
   SavedPayment: 'payment',
   WebhookEvent: 'payment',
   Brand: 'catalog',

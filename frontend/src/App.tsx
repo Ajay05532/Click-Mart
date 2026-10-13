@@ -4,6 +4,7 @@ import { ApiError } from './lib/api.ts'
 import { StoreLayout } from './components/layout/StoreLayout.tsx'
 import { AuthProvider } from './context/AuthContext.tsx'
 import { CartProvider } from './context/CartContext.tsx'
+import { LocationProvider } from './context/LocationContext.tsx'
 import { WishlistProvider } from './context/WishlistContext.tsx'
 import { AboutPage } from './pages/AboutPage.tsx'
 import { RequireAuth } from './components/auth/RequireAuth.tsx'
@@ -40,6 +41,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
     <AuthProvider>
+      <LocationProvider>
       <CartProvider>
         <WishlistProvider>
           <BrowserRouter>
@@ -73,6 +75,7 @@ export default function App() {
           </BrowserRouter>
         </WishlistProvider>
       </CartProvider>
+      </LocationProvider>
     </AuthProvider>
     </QueryClientProvider>
   )

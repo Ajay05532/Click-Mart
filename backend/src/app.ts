@@ -11,6 +11,7 @@ import { errorHandler, notFoundHandler } from './middleware/errors.js'
 import { adminRouter, UPLOAD_DIR } from './routes/admin/index.js'
 import { authRouter } from './routes/auth.js'
 import { catalogRouter } from './routes/catalog.js'
+import { geoRouter } from './routes/location.js'
 import { meRouter } from './routes/me.js'
 import { ordersRouter, paymentsRouter, paymentWebhook } from './routes/orders.js'
 
@@ -46,6 +47,7 @@ export function createApp() {
   api.use('/auth/forgot-password', strict(8))
   api.use('/auth', authFailures, authRouter)
   api.use('/checkout', strict(60))
+  api.use('/geo', limit(300), geoRouter)
   api.use(optionalAuth)
   api.use('/me', meRouter)
   api.use('/payments', paymentsRouter)

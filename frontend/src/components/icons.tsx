@@ -51,6 +51,24 @@ export function UserIcon(props: IconProps) {
   )
 }
 
+export function BellIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2H4.5L6 16Z" />
+      <path d="M10 19a2 2 0 0 0 4 0" />
+    </Svg>
+  )
+}
+
+export function LogoutIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M10 7V5.5A1.5 1.5 0 0 1 11.5 4h7A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 10 18.5V17" />
+      <path d="M4 12h9M4 12l3-3M4 12l3 3" />
+    </Svg>
+  )
+}
+
 export function CartIcon(props: IconProps) {
   return (
     <Svg {...props}>

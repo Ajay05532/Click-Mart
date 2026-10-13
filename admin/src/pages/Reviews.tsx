@@ -5,7 +5,7 @@ import { dateOnly } from '../format.ts'
 import { useAction } from '../hooks.ts'
 import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, PageLoader, Tabs, useUi } from '../ui.tsx'
 
-type Review = { id: string; name: string; city: string; rating: number; comment: string; verified: boolean; status: 'PENDING' | 'APPROVED' | 'REJECTED'; createdAt: string; product: { name: string; slug: string } }
+type Review = { id: string; name: string; city: string; rating: number; comment: string; images?: string[]; verified: boolean; status: 'PENDING' | 'APPROVED' | 'REJECTED'; createdAt: string; product: { name: string; slug: string } }
 
 export function ReviewsPage() {
   const { confirm } = useUi()
@@ -34,6 +34,11 @@ export function ReviewsPage() {
                 </div>
               </div>
               <p className="mt-3 text-sm leading-6 text-ink-soft">{r.comment}</p>
+              {!!r.images?.length && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {r.images.map((src) => <a key={src} href={src} target="_blank" rel="noreferrer"><img src={src} alt="" className="size-16 rounded-lg object-cover ring-1 ring-line" /></a>)}
+                </div>
+              )}
             </Card>
           ))}
         </div>

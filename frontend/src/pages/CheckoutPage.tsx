@@ -2,12 +2,13 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { OrderSummary } from '../components/cart/OrderSummary.tsx'
-import { BankIcon, CardIcon, CartIcon, CashIcon, ChevronIcon, LockIcon, QrIcon, ShieldIcon } from '../components/icons.tsx'
+import { BankIcon, CardIcon, CartIcon, CashIcon, ChevronIcon, LockIcon, PinIcon, QrIcon, ShieldIcon } from '../components/icons.tsx'
 import { Container } from '../components/layout/Container.tsx'
 import { Breadcrumbs } from '../components/ui/Breadcrumbs.tsx'
 import { EmptyState, Stepper } from '../components/ui/Primitives.tsx'
 import { useAuth } from '../context/AuthContext.tsx'
 import { useCart } from '../context/CartContext.tsx'
+import { useDeliveryLocation } from '../context/LocationContext.tsx'
 import { indianStates } from '../data/india.ts'
 import { formatPrice } from '../lib/money.ts'
 import { ApiError, api, errorMessage } from '../lib/api.ts'
@@ -48,6 +49,16 @@ const upiApps = ['Google Pay', 'PhonePe', 'Paytm', 'BHIM']
 const banks = ['HDFC Bank', 'ICICI Bank', 'SBI', 'Axis Bank', 'Kotak', 'Yes Bank', 'PNB', 'Bank of Baroda']
 const ADDRESS_KEY = 'clickmart-address'
 
+const matchState = (name: string | null | undefined, fallback: string) => {
+  if (!name?.trim()) return fallback
+  const lower = name.trim().toLowerCase()
+  return (
+    indianStates.find((state) => state.toLowerCase() === lower) ??
+    indianStates.find((state) => lower.includes(state.toLowerCase()) || state.toLowerCase().includes(lower)) ??
+    fallback
+  )
+}
+
 function loadAddress() {
   try {
     return JSON.parse(localStorage.getItem(ADDRESS_KEY) ?? 'null') as Record<string, string> | null
@@ -60,17 +71,21 @@ export function CheckoutPage() {
   useDocumentTitle('Checkout')
   const { user } = useAuth()
   const cart = useCart()
+  const { location: delivery } = useDeliveryLocation()
   const navigate = useNavigate()
   const [saved] = useState(loadAddress)
   const [step, setStep] = useState(0)
-  const [form, setForm] = useState({
-    name: saved?.name ?? user?.name ?? '',
-    email: saved?.email ?? user?.email ?? '',
-    phone: saved?.phone ?? '',
-    pin: saved?.pin ?? localStorage.getItem('clickmart-pin') ?? '',
-    address: saved?.address ?? '',
-    city: saved?.city ?? '',
-    state: saved?.state ?? 'Karnataka',
+  const [form, setForm] = useState(() => {
+    const complete = (saved?.address ?? '').trim().length >= 8
+    return {
+      name: saved?.name || user?.name || '',
+      email: saved?.email || user?.email || '',
+      phone: (saved?.phone || user?.phone || '').replace(/\D/g, '').slice(-10),
+      pin: complete ? saved?.pin ?? '' : delivery?.pin || saved?.pin || '',
+      address: complete ? saved?.address ?? '' : '',
+      city: complete ? saved?.city ?? '' : delivery?.city || saved?.city || '',
+      state: complete ? saved?.state || 'Karnataka' : matchState(delivery?.state, saved?.state || 'Karnataka'),
+    }
   })
   const [payment, setPayment] = useState<Payment>('upi')
   const [upiId, setUpiId] = useState('')
@@ -101,8 +116,7 @@ export function CheckoutPage() {
     const chosen = addresses.data?.find((item) => item.isDefault) ?? addresses.data?.[0]
     if (prefilled || !chosen) return
     setPrefilled(true)
-    if (!form.address) chooseAddress(chosen)
-    else setAddressId('')
+    chooseAddress(chosen)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addresses.data, prefilled])
 
@@ -162,7 +176,7 @@ export function CheckoutPage() {
   }
 
   const placeOrder = async () => {
-    if (!validatePayment() || cart.lines.length === 0 || processing) return
+    if (!validatePayment() || cart.count === 0 || processing) return
     setFailed('')
     setProcessing(true)
     const digits = selectedSaved ? (selectedSaved.last4 ?? '') : stripNonDigits(card.number)
@@ -170,7 +184,7 @@ export function CheckoutPage() {
     try {
       const result = await api<{ order: ApiOrder; payment: { provider: 'mock' | 'razorpay'; providerOrderId: string; keyId?: string; amount: number } | null }>('/checkout', {
         body: {
-          items: cart.lines.map((line) => ({ variantId: line.variantId, quantity: line.quantity })),
+          items: cart.items.map((line) => ({ variantId: line.variantId, quantity: line.quantity })),
           couponCode: cart.coupon?.code ?? null,
           paymentMethod: apiMethod[payment],
           // Display details only. The card number and CVV never leave this browser.
@@ -234,7 +248,7 @@ export function CheckoutPage() {
     }
   }
 
-  if (cart.lines.length === 0 && !placed) {
+  if (cart.count === 0 && !placed) {
     return (
       <Container className="py-16">
         <EmptyState
@@ -243,6 +257,23 @@ export function CheckoutPage() {
           text="Add a few pouches to your cart first, then come back here to complete your order."
           action={{ to: '/shop', label: 'Browse dry fruits' }}
         />
+      </Container>
+    )
+  }
+
+  if (cart.lines.length === 0 && !placed) {
+    return (
+      <Container className="grid min-h-60 place-items-center py-16 text-center">
+        {cart.quoteError ? (
+          <div>
+            <p className="font-semibold text-rose-600">{cart.quoteError}</p>
+            <button type="button" onClick={cart.reloadQuote} className="btn btn-accent mt-4">
+              Try again
+            </button>
+          </div>
+        ) : (
+          <span className="motion-spin block size-10 rounded-full border-4 border-brand-soft border-t-brand" role="status" aria-label="Loading your cart" />
+        )}
       </Container>
     )
   }
@@ -301,12 +332,7 @@ export function CheckoutPage() {
     <div className="bg-canvas pb-28 lg:pb-0">
       <Container className="py-8 sm:py-10">
         <Breadcrumbs items={[{ label: 'Home', to: '/' }, { label: 'Cart', to: '/cart' }, { label: 'Checkout' }]} />
-        <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
-          <h1 className="text-3xl font-extrabold tracking-tight">Checkout</h1>
-          <p className="inline-flex items-center gap-1.5 text-xs font-bold text-success">
-            <LockIcon className="size-4" /> 256-bit SSL secured
-          </p>
-        </div>
+        <h1 className="mt-4 text-3xl font-extrabold tracking-tight">Checkout</h1>
         <div className="mt-6 max-w-xl">
           <Stepper steps={['Cart', 'Details', 'Payment']} current={step + 1} />
         </div>
@@ -314,39 +340,65 @@ export function CheckoutPage() {
         <div className="mt-8 grid items-start gap-6 lg:grid-cols-[1fr_380px]">
           <div>
             {step === 0 ? (
-              <form onSubmit={continueToPayment} noValidate className="card motion-page p-5 sm:p-7">
-                <h2 className="text-xl font-extrabold">Delivery details</h2>
-                <p className="mt-1 text-sm text-muted">Where should we send your order?</p>
+              <form id="checkout-details" onSubmit={continueToPayment} noValidate className="card motion-page p-5 sm:p-7">
+                <h2 className="text-xl font-extrabold">Delivery address</h2>
+                <p className="mt-1 text-sm text-muted">Choose where this order should arrive.</p>
+                {delivery && (
+                  <p className="mt-4 inline-flex items-center gap-2 rounded-full bg-canvas px-3 py-1.5 text-xs font-bold">
+                    <PinIcon className="size-4 text-brand" />
+                    Delivering near {delivery.city ? `${delivery.city} ` : ''}{delivery.pin}
+                  </p>
+                )}
                 {!!addresses.data?.length && (
-                  <div role="radiogroup" aria-label="Saved addresses" className="mt-5 grid gap-3 sm:grid-cols-2">
-                    {addresses.data.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={addressId === item.id}
-                        onClick={() => chooseAddress(item)}
-                        className={`relative rounded-2xl border-2 p-4 text-left text-sm transition ${addressId === item.id ? 'border-brand bg-brand-soft' : 'border-line bg-white hover:border-brand/40'}`}
-                      >
-                        <span className="flex items-center gap-2 font-extrabold">
-                          {item.name}
-                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-muted ring-1 ring-line">{addressLabels[item.label] ?? 'Home'}</span>
-                          {item.isDefault && <span className="text-[10px] font-bold text-brand">Default</span>}
-                        </span>
-                        <span className="mt-1 block leading-5 text-muted">{item.line}, {item.city}, {item.state} {item.pin}</span>
-                        <span className="block text-xs text-muted">+91 {item.phone}</span>
-                      </button>
-                    ))}
+                  <div role="radiogroup" aria-label="Saved addresses" className="mt-5 grid gap-3">
+                    {addresses.data.map((item) => {
+                      const active = addressId === item.id
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          onClick={() => chooseAddress(item)}
+                          className={`flex gap-3 rounded-2xl border-2 p-4 text-left text-sm transition ${active ? 'border-brand bg-brand-soft' : 'border-line bg-white hover:border-brand/40'}`}
+                        >
+                          <span className={`mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border-2 text-[10px] ${active ? 'border-brand bg-brand text-white' : 'border-line'}`}>{active ? '✓' : ''}</span>
+                          <span className="min-w-0">
+                            <span className="flex flex-wrap items-center gap-2 font-extrabold">
+                              {addressLabels[item.label] ?? 'Home'}
+                              {item.isDefault && <span className="rounded-md bg-white px-1.5 py-0.5 text-[10px] font-bold text-brand ring-1 ring-line">Default</span>}
+                            </span>
+                            <span className="mt-1 block font-semibold">{item.name} · {item.phone}</span>
+                            <span className="mt-0.5 block leading-5 text-muted">{item.line}, {item.city}, {item.state} — {item.pin}</span>
+                          </span>
+                        </button>
+                      )
+                    })}
                     <button
                       type="button"
-                      onClick={() => { setAddressId(''); setErrors({}); setForm((current) => ({ ...current, address: '', city: '', pin: '' })) }}
-                      className={`rounded-2xl border-2 border-dashed p-4 text-left text-sm font-bold transition ${!addressId ? 'border-brand bg-brand-soft text-brand' : 'border-line text-muted hover:border-brand/40'}`}
+                      onClick={() => {
+                        setAddressId('')
+                        setErrors({})
+                        setForm((current) => ({
+                          ...current,
+                          address: '',
+                          pin: delivery?.pin || '',
+                          city: delivery?.city || '',
+                          state: matchState(delivery?.state, current.state),
+                        }))
+                      }}
+                      className={`rounded-2xl border-2 border-dashed px-4 py-3 text-left text-sm font-bold transition ${!addressId ? 'border-brand bg-brand-soft text-brand' : 'border-line text-muted hover:border-brand/40'}`}
                     >
                       + Deliver to a new address
                     </button>
                   </div>
                 )}
-                <div className="mt-6 grid gap-5 sm:grid-cols-2">
+                {addressId && (
+                  <Field label="Email for the receipt" error={errors.email} className="mt-5">
+                    <input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" className="field" aria-invalid={!!errors.email} placeholder="you@example.com" />
+                  </Field>
+                )}
+                <div className={`mt-6 grid gap-5 sm:grid-cols-2 ${addressId ? 'hidden' : ''}`}>
                   <Field label="Full name" error={errors.name} className={`sm:col-span-2 ${addressId ? 'hidden' : ''}`}>
                     <input value={form.name} onChange={(e) => set('name', e.target.value)} autoComplete="name" className="field" aria-invalid={!!errors.name} placeholder="As on your ID" />
                   </Field>
@@ -363,10 +415,10 @@ export function CheckoutPage() {
                     <textarea value={form.address} onChange={(e) => set('address', e.target.value)} autoComplete="street-address" rows={3} className="field" aria-invalid={!!errors.address} placeholder="House no., building, street, area" />
                   </Field>
                   <Field label="PIN code" error={errors.pin} className={addressId ? 'hidden' : ''}>
-                    <input value={form.pin} onChange={(e) => set('pin', stripNonDigits(e.target.value).slice(0, 6))} inputMode="numeric" autoComplete="postal-code" className="field" aria-invalid={!!errors.pin} placeholder="560025" />
+                    <input value={form.pin} onChange={(e) => set('pin', stripNonDigits(e.target.value).slice(0, 6))} inputMode="numeric" autoComplete="postal-code" className="field" aria-invalid={!!errors.pin} placeholder="6-digit PIN" />
                   </Field>
                   <Field label="City" error={errors.city} className={addressId ? 'hidden' : ''}>
-                    <input value={form.city} onChange={(e) => set('city', e.target.value)} autoComplete="address-level2" className="field" aria-invalid={!!errors.city} placeholder="Bengaluru" />
+                    <input value={form.city} onChange={(e) => set('city', e.target.value)} autoComplete="address-level2" className="field" aria-invalid={!!errors.city} placeholder="City" />
                   </Field>
                   <Field label="State" className={`sm:col-span-2 ${addressId ? 'hidden' : ''}`}>
                     <select value={form.state} onChange={(e) => set('state', e.target.value)} className="field cursor-pointer">
@@ -387,7 +439,7 @@ export function CheckoutPage() {
                     <span className="font-extrabold text-brand">Standard delivery</span> in 3–5 working days. You can track every step live after ordering.
                   </p>
                 </div>
-                <button type="submit" className="btn btn-accent btn-lg mt-7 w-full sm:w-auto">
+                <button type="submit" className="btn btn-accent btn-lg mt-7 hidden w-full sm:w-auto lg:inline-flex">
                   Continue to payment <ChevronIcon className="size-4" />
                 </button>
               </form>
@@ -567,6 +619,14 @@ export function CheckoutPage() {
           <OrderSummary showItems />
         </div>
       </Container>
+
+      {step === 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/95 p-4 shadow-[0_-10px_30px_-12px_rgb(21_32_51/0.2)] backdrop-blur lg:hidden">
+          <button type="submit" form="checkout-details" className="btn btn-accent btn-lg w-full">
+            Continue to payment <ChevronIcon className="size-4" />
+          </button>
+        </div>
+      )}
 
       {step === 1 && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/95 p-4 shadow-[0_-10px_30px_-12px_rgb(21_32_51/0.2)] backdrop-blur lg:hidden">
