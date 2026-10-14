@@ -375,3 +375,54 @@ export function FilterIcon(props: IconProps) {
     </Svg>
   )
 }
+
+export function ChatIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.2-4.4A8 8 0 1 1 21 12z" />
+      <path d="M8.5 11h7M8.5 14h4" />
+    </Svg>
+  )
+}
+
+export function HelpIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.6 9.6a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.2 1-1.2 1.8M12 17h.01" />
+    </Svg>
+  )
+}
+
+export function PaperclipIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7-7L14 4.5a3.4 3.4 0 0 1 4.8 4.8L10.2 18a1.8 1.8 0 0 1-2.5-2.5L15 8.2" />
+    </Svg>
+  )
+}
+
+export function SendIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M22 2 11 13M22 2l-7 20-4-9-9-4z" />
+    </Svg>
+  )
+}
+
+export function ClockIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </Svg>
+  )
+}
+
+export function HeadsetIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 14v-2a8 8 0 0 1 16 0v2M4 14h3v5H5a1 1 0 0 1-1-1zM20 14h-3v5h2a1 1 0 0 0 1-1zM17 19a4 4 0 0 1-4 2h-1" />
+    </Svg>
+  )
+}

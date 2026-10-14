@@ -87,6 +87,8 @@ export type StoreSettings = {
   codEnabled: boolean
   codMaxOrder: number
   paymentProvider: 'mock' | 'razorpay'
+  /** True when checkout opens Razorpay's test window. No real money moves. */
+  paymentTestMode: boolean
 }
 
 const defaults: StoreSettings = {
@@ -98,6 +100,7 @@ const defaults: StoreSettings = {
   codEnabled: true,
   codMaxOrder: 5000,
   paymentProvider: 'mock',
+  paymentTestMode: false,
 }
 
 /** Shipping rules and payment options set in the admin. Falls back to sensible defaults while loading. */

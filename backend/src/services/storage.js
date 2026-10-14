@@ -8,6 +8,7 @@ export const imageBuckets = {
   banner: 'banner-images',
   profile: 'profile-images',
   review: 'review-images',
+  support: 'support-attachments',
 }
 const extensions = {
   'image/jpeg': '.jpg',
@@ -28,6 +29,15 @@ export const reviewImageUpload = multer({
   limits: {
     fileSize: 5 * 1024 * 1024,
     files: 4,
+  },
+  fileFilter: imageFilter,
+})
+/** Up to three photos on one support message. */
+export const supportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+    files: 3,
   },
   fileFilter: imageFilter,
 })

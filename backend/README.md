@@ -86,3 +86,7 @@ src/
 supabase/          schema.sql and migrations/
 tests/             unit tests
 ```
+
+## Customer support
+
+Tickets, replies, help articles and saved replies live in the `ops` schema (`supabase/migrations/2026-10-14-customer-support.sql`, also section 16 of `schema.sql`). Customers use `/api/v1/support/*`, staff use `/api/v1/admin/support/*`. New tickets email the customer a confirmation, and a staff reply emails them the answer (printed in the log until `SMTP_URL` is set).

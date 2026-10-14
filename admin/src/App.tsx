@@ -12,6 +12,9 @@ import { OffersPage } from './pages/Offers.tsx'
 import { OrdersPage } from './pages/Orders.tsx'
 import { ProductsPage } from './pages/Products.tsx'
 import { ReviewsPage } from './pages/Reviews.tsx'
+import { SupportPage } from './pages/Support.tsx'
+import { SupportContentPage } from './pages/SupportContent.tsx'
+import { SupportTicketPage } from './pages/SupportTicket.tsx'
 import { AuditPage, SettingsPage, StaffPage } from './pages/Admin.tsx'
 import { AccountPage } from './pages/Account.tsx'
 import { ForgotPasswordPage, ResetPasswordPage } from './pages/Recovery.tsx'
@@ -33,6 +36,9 @@ export default function App() {
         <Route path="coupons" element={<CouponsPage />} />
         <Route path="banners" element={<BannersPage />} />
         <Route path="reviews" element={<ReviewsPage />} />
+        <Route path="support" element={<SupportPage />} />
+        <Route path="support/:id" element={<SupportTicketPage />} />
+        <Route path="help-content" element={<SupportContentPage />} />
         <Route path="customers" element={<CustomersPage />} />
         <Route path="staff" element={<StaffPage />} />
         <Route path="settings" element={<SettingsPage />} />

@@ -4,68 +4,104 @@ import { findAccountById } from './account.js'
 import { exec, from, maybe, rows } from '../database/db.js'
 import { env } from '../config/env.js'
 const REFRESH_DAYS = 30
+const ACCESS_TTL = '15m'
 export { hashPassword, verifyPassword, needsRehash, burnTime } from './passwords.js'
 export function signAccessToken(user) {
   return jwt.sign(
     {
       sub: user.id,
       role: user.role,
+      typ: 'access',
     },
     env.JWT_ACCESS_SECRET,
     {
-      expiresIn: '15m',
+      expiresIn: ACCESS_TTL,
       algorithm: 'HS256',
       issuer: 'clickmart',
     },
   )
 }
-export function readAccessToken(token) {
+function readJwt(token, secret, typ) {
   try {
-    const payload = jwt.verify(token, env.JWT_ACCESS_SECRET, {
+    const payload = jwt.verify(token, secret, {
       algorithms: ['HS256'],
       issuer: 'clickmart',
     })
-    return {
-      id: payload.sub,
-      role: payload.role,
-    }
+    if (!payload?.sub || payload.typ !== typ) return null
+    return payload
   } catch {
     return null
   }
 }
+export function readAccessToken(token) {
+  const payload = readJwt(token, env.JWT_ACCESS_SECRET, 'access')
+  if (!payload) return null
+  return {
+    id: payload.sub,
+    role: payload.role,
+  }
+}
 const sha = (value) => createHash('sha256').update(value).digest('hex')
-export async function issueRefreshToken(userId) {
-  const token = randomBytes(48).toString('hex')
+const refreshExpiry = () => new Date(Date.now() + REFRESH_DAYS * 86400000).toISOString()
+export function signRefreshToken(user, jti) {
+  return jwt.sign(
+    {
+      sub: user.id,
+      role: user.role,
+      jti,
+      typ: 'refresh',
+    },
+    env.JWT_REFRESH_SECRET,
+    {
+      expiresIn: `${REFRESH_DAYS}d`,
+      algorithm: 'HS256',
+      issuer: 'clickmart',
+    },
+  )
+}
+export function readRefreshToken(token) {
+  const payload = readJwt(token, env.JWT_REFRESH_SECRET, 'refresh')
+  if (!payload?.jti) return null
+  return {
+    id: payload.sub,
+    role: payload.role,
+    jti: payload.jti,
+  }
+}
+export async function issueRefreshToken(user) {
+  const jti = randomBytes(32).toString('hex')
   await exec(
     from('RefreshToken').insert({
-      userId,
-      tokenHash: sha(token),
-      expiresAt: new Date(Date.now() + REFRESH_DAYS * 86400000).toISOString(),
+      userId: user.id,
+      tokenHash: sha(jti),
+      expiresAt: refreshExpiry(),
     }),
   )
-  return token
+  return signRefreshToken(user, jti)
 }
-const REUSE_GRACE_MS = 30_000
-export async function consumeRefreshToken(token) {
-  const record = await maybe(from('RefreshToken').select('id, expiresAt, userId').eq('tokenHash', sha(token)).maybeSingle())
+/** Checks the refresh JWT and slides its lifetime. The same session id stays valid, so a reload cannot revoke it. */
+export async function renewRefreshToken(token) {
+  const payload = readRefreshToken(token)
+  if (!payload) return null
+  const record = await maybe(from('RefreshToken').select('id, expiresAt, userId').eq('tokenHash', sha(payload.jti)).maybeSingle())
   const user = record ? await findAccountById(record.userId) : null
-  if (!record || !user || new Date(record.expiresAt) < new Date() || user.isBlocked) return null
-  const graceEnd = new Date(Date.now() + REUSE_GRACE_MS)
-  if (new Date(record.expiresAt) > graceEnd) {
-    await from('RefreshToken')
-      .update({
-        expiresAt: graceEnd.toISOString(),
-      })
-      .eq('id', record.id)
+  if (!record || !user || record.userId !== payload.id || new Date(record.expiresAt) < new Date() || user.isBlocked) return null
+  const expiresAt = refreshExpiry()
+  await exec(from('RefreshToken').update({ expiresAt }).eq('id', record.id))
+  return {
+    user,
+    refreshToken: signRefreshToken(user, payload.jti),
   }
-  return user
 }
 export const purgeExpiredRefreshTokens = async () => {
   const now = new Date().toISOString()
   await exec(from('RefreshToken').delete().lt('expiresAt', now))
   await exec(from('PasswordReset').delete().lt('expiresAt', now))
 }
-export const revokeRefreshToken = (token) => exec(from('RefreshToken').delete().eq('tokenHash', sha(token)))
+export const revokeRefreshToken = (token) => {
+  const payload = readRefreshToken(token)
+  return exec(from('RefreshToken').delete().eq('tokenHash', sha(payload ? payload.jti : token)))
+}
 export const revokeAllRefreshTokens = (userId) => exec(from('RefreshToken').delete().eq('userId', userId))
 const RESET_MINUTES = 30
 export async function createPasswordReset(userId) {
@@ -94,13 +130,16 @@ export async function consumePasswordReset(token) {
   )
   return claimed.length === 1 ? record.userId : null
 }
-export const REFRESH_COOKIE = 'cm_refresh'
-export const refreshCookieOptions = {
+const cookieFlags = {
   httpOnly: true,
   sameSite: env.COOKIE_SAMESITE,
   secure: env.NODE_ENV === 'production' || env.COOKIE_SAMESITE === 'none',
-  path: '/api/v1/auth',
-  maxAge: REFRESH_DAYS * 86400000,
 }
-/** Same flags as the cookie, minus the age, so the browser matches it when clearing. */
-export const clearCookieOptions = { httpOnly: true, sameSite: refreshCookieOptions.sameSite, secure: refreshCookieOptions.secure, path: refreshCookieOptions.path }
+const clearFlags = (path) => ({ httpOnly: true, sameSite: cookieFlags.sameSite, secure: cookieFlags.secure, path })
+export const ACCESS_COOKIE = 'cm_access'
+export const accessCookieOptions = { ...cookieFlags, path: '/api/v1', maxAge: 15 * 60 * 1000 }
+export const clearAccessCookieOptions = clearFlags('/api/v1')
+export const REFRESH_COOKIE = 'cm_refresh'
+export const refreshCookieOptions = { ...cookieFlags, path: '/api/v1/auth', maxAge: REFRESH_DAYS * 86400000 }
+/** Same flags as the refresh cookie, minus the age, so the browser matches it when clearing. */
+export const clearCookieOptions = clearFlags('/api/v1/auth')

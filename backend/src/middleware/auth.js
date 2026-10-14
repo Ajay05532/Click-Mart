@@ -1,8 +1,10 @@
-import { readAccessToken } from '../services/auth.js'
+import { ACCESS_COOKIE, readAccessToken } from '../services/auth.js'
 import { forbidden, unauthorized } from '../utils/errors.js'
 function attach(req) {
   const header = req.headers.authorization
-  if (header?.startsWith('Bearer ')) req.auth = readAccessToken(header.slice(7)) ?? undefined
+  const bearer = header?.startsWith('Bearer ') ? readAccessToken(header.slice(7)) : null
+  const cookie = typeof req.cookies?.[ACCESS_COOKIE] === 'string' ? readAccessToken(req.cookies[ACCESS_COOKIE]) : null
+  req.auth = bearer ?? cookie ?? undefined
 }
 export function optionalAuth(req, _res, next) {
   attach(req)

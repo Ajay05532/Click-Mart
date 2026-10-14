@@ -1,6 +1,9 @@
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
 const PREFIX = `${BASE}/api/v1`
 
+/** Full URL of an API path. Needed for raw fetches, because in production the API is on another domain. */
+export const apiUrl = (path: string) => `${PREFIX}${path}`
+
 export class ApiError extends Error {
   status: number
   details?: unknown
@@ -11,11 +14,13 @@ export class ApiError extends Error {
   }
 }
 
-// The short-lived access token lives only in memory. The long-lived refresh token is an httpOnly cookie
-// that scripts cannot read, so a page refresh restores the session without storing secrets in localStorage.
+// The access JWT also sits in an httpOnly cookie, so a reload stays signed in.
+// The refresh JWT is a second httpOnly cookie (30 days) and is what /auth/refresh uses to mint a new access token.
 let accessToken: string | null = null
 let onSessionLost: (() => void) | null = null
-let refreshing: Promise<boolean> | null = null
+let refreshing: Promise<AuthSession | null> | null = null
+
+export type AuthSession = { accessToken: string; user: { id: string; role: string } }
 
 export const setAccessToken = (token: string | null) => {
   accessToken = token
@@ -42,15 +47,16 @@ function errorFrom(status: number, json: { error?: string; details?: unknown } |
   return new ApiError(status, message, json?.details)
 }
 
-export function refreshSession(): Promise<boolean> {
+export function refreshSession(): Promise<AuthSession | null> {
   refreshing ??= fetch(`${PREFIX}/auth/refresh`, { method: 'POST', credentials: 'include' })
     .then(async (response) => {
-      if (!response.ok) return false
-      const data = (await response.json()) as { accessToken: string }
+      if (!response.ok) return null
+      const data = (await response.json()) as AuthSession
+      if (!data?.accessToken) return null
       accessToken = data.accessToken
-      return true
+      return data
     })
-    .catch(() => false)
+    .catch(() => null)
     .finally(() => {
       refreshing = null
     })

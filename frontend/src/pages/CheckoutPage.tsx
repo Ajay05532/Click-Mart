@@ -148,8 +148,13 @@ export function CheckoutPage() {
     return Object.keys(next).length === 0
   }
 
+  const razorpay = settings.paymentProvider === 'razorpay'
   const validatePayment = () => {
     const next: Errors = {}
+    if (razorpay && payment !== 'cod') {
+      setErrors({})
+      return true
+    }
     if (payment === 'upi' && !selectedSaved && !upiIdValid(upiId)) next.upi = 'Enter a valid UPI ID, e.g. name@okhdfc'
     if (payment === 'card') {
       if (selectedSaved) {
@@ -188,8 +193,9 @@ export function CheckoutPage() {
           couponCode: cart.coupon?.code ?? null,
           paymentMethod: apiMethod[payment],
           // Display details only. The card number and CVV never leave this browser.
-          paymentDetail:
-            payment === 'upi' ? (selectedSaved ? { savedPaymentId: selectedSaved.id } : { upiId: upiId.trim() })
+          paymentDetail: razorpay
+            ? undefined
+            : payment === 'upi' ? (selectedSaved ? { savedPaymentId: selectedSaved.id } : { upiId: upiId.trim() })
             : payment === 'card' ? (selectedSaved ? { savedPaymentId: selectedSaved.id } : { cardBrand: cardBrand(digits) || 'Card', cardLast4: digits.slice(-4) })
             : payment === 'netbanking' ? { bank }
             : undefined,
@@ -203,7 +209,9 @@ export function CheckoutPage() {
         const started = Date.now()
         let paid: { providerPaymentId: string; signature: string }
         if (result.payment.provider === 'razorpay') {
+          setProcessing(false)
           paid = await payWithRazorpay({ keyId: result.payment.keyId!, orderId: providerOrderId, amount: result.payment.amount, customer: { name: form.name.trim(), email: form.email.trim(), phone: form.phone } })
+          setProcessing(true)
         } else {
           // Development gateway. A card ending 0002 is declined so the failure path can be seen.
           const outcome = (payment === 'card' && digits.endsWith('0002')) || (payment === 'upi' && upiId.trim().toLowerCase().startsWith('fail@')) ? 'failure' : 'success'
@@ -221,7 +229,7 @@ export function CheckoutPage() {
           .then(() => queryClient.invalidateQueries({ queryKey: ['addresses'] }))
           .catch(() => undefined)
       }
-      if (user && saveMethod && !selectedSaved && result.payment) {
+      if (user && saveMethod && !selectedSaved && result.payment && !razorpay) {
         const body =
           payment === 'upi' ? { kind: 'UPI', upiId: upiId.trim() }
           : payment === 'card' ? savedCardBody(card)
@@ -326,7 +334,7 @@ export function CheckoutPage() {
       </label>
     ) : null
 
-  const payLabel = payment === 'cod' ? 'Place order' : `Pay ${formatPrice(cart.total)}`
+  const payLabel = payment === 'cod' ? 'Place order' : razorpay ? `Pay ${formatPrice(cart.total)} with Razorpay` : `Pay ${formatPrice(cart.total)}`
 
   return (
     <div className="bg-canvas pb-28 lg:pb-0">
@@ -499,7 +507,19 @@ export function CheckoutPage() {
                   </div>
 
                   <div key={payment} className="motion-panel mt-6">
-                    {payment === 'upi' && (
+                    {razorpay && payment !== 'cod' && (
+                      <div className="rounded-2xl bg-canvas p-5 text-sm leading-6">
+                        <p className="font-extrabold">Pay in Razorpay’s window</p>
+                        <p className="mt-1 text-muted">Card, UPI and net banking are entered there. ClickMart never sees the card number or CVV.</p>
+                        {settings.paymentTestMode && (
+                          <p className="mt-3 text-ink-soft">
+                            Test card <span className="font-mono font-bold">4100 2800 0000 1007</span>, any future expiry, any CVV. On the bank page use an OTP of 4 to 10 digits, such as <span className="font-mono font-bold">1234</span>. A shorter OTP declines the payment. No money is charged.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {!razorpay && payment === 'upi' && (
                       <div>
                         <p className="text-sm font-bold">Pay with your UPI app</p>
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -532,7 +552,7 @@ export function CheckoutPage() {
                       </div>
                     )}
 
-                    {payment === 'card' && (
+                    {!razorpay && payment === 'card' && (
                       <div>
                         {SavedPicker({ kind: 'CARD' })}
                         {selectedSaved ? (
@@ -574,7 +594,7 @@ export function CheckoutPage() {
                       </div>
                     )}
 
-                    {payment === 'netbanking' && (
+                    {!razorpay && payment === 'netbanking' && (
                       <div>
                         <p className="text-sm font-bold">Choose your bank</p>
                         <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-4">

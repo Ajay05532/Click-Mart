@@ -31,8 +31,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     ;(async () => {
       try {
-        if (await refreshSession()) {
-          const me = await api<{ user: User }>('/me')
+        const session = await refreshSession()
+        if (!cancelled && session?.user) setUser(session.user as User)
+        else if (!session) {
+          // The access cookie can still be valid when the refresh cookie is missing.
+          const me = await api<{ user: User }>('/me', {}, true)
           if (!cancelled) setUser(me.user)
         }
       } catch {

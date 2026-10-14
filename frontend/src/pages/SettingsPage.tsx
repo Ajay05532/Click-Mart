@@ -158,9 +158,7 @@ export function SettingsPage() {
 function Orders({ orderCount }: { orderCount: number }) {
   return (
     <div>
-      <SectionHead title="Your orders" text="Track a delivery or look back at what you bought.">
-        <Link to="/track" className="btn btn-brand btn-sm">Track by order ID</Link>
-      </SectionHead>
+      <SectionHead title="Your orders" text="Track a delivery or look back at what you bought." />
       {orderCount === 0 ? (
         <EmptyState
           icon={<BoxIcon className="size-8" />}

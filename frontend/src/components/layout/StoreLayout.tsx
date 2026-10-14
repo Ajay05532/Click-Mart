@@ -12,13 +12,14 @@ export function StoreLayout() {
     window.scrollTo(0, 0)
   }, [pathname])
 
+  const hideFooter = pathname === '/login'
   return (
     <div className="flex min-h-svh flex-col bg-white">
       <Header />
-      <main key={pathname} className="motion-page flex-1">
+      <main key={pathname} className="motion-page flex flex-1 flex-col">
         <Outlet />
       </main>
-      <Footer />
+      {!hideFooter && <Footer />}
       {toast && (
         <div key={toastTick} role="status" className="motion-toast fixed top-20 right-4 z-50 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-line bg-white p-4 text-ink shadow-pop">
           <p className="flex items-center gap-2 text-sm font-extrabold">

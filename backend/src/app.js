@@ -13,6 +13,7 @@ import { catalogRouter } from './routes/catalog.js'
 import { geoRouter } from './routes/location.js'
 import { meRouter } from './routes/me.js'
 import { ordersRouter, paymentsRouter, paymentWebhook } from './routes/orders.js'
+import { supportRouter } from './routes/support.js'
 export function createApp() {
   const app = express()
   app.set('trust proxy', 1)
@@ -78,6 +79,11 @@ export function createApp() {
   api.use('/geo', limit(300), geoRouter)
   api.use(optionalAuth)
   api.use('/me', meRouter)
+  // Contact form and new tickets are the spam targets, so they get tighter limits than reading.
+  api.post('/support/contact', limit(6, { windowMs: 60 * 60 * 1000 }))
+  api.post('/support/tickets', limit(20, { windowMs: 60 * 60 * 1000 }))
+  api.post('/support/attachments', limit(30, { windowMs: 60 * 60 * 1000 }))
+  api.use('/support', limit(600), supportRouter)
   api.use('/payments', paymentsRouter)
   api.use('/admin', adminRouter)
   api.use(ordersRouter)

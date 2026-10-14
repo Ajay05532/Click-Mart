@@ -306,7 +306,7 @@ adminOpsRouter.get('/audit', adminOnly, async (req, res) => {
 })
 adminOpsRouter.get('/summary', async (_req, res) => {
   const settings = await getSettings()
-  const [pending, toPack, toShip, variants] = await Promise.all([
+  const [pending, toPack, toShip, variants, supportNeedingReply] = await Promise.all([
     count(
       from('Order')
         .select('id', {
@@ -332,11 +332,21 @@ adminOpsRouter.get('/summary', async (_req, res) => {
         .eq('status', 'PACKED'),
     ),
     rows(from('ProductVariant').select('stock, lowStockAt, product:Product!inner(isActive)').eq('isActive', true).eq('product.isActive', true)),
+    count(
+      from('SupportTicket')
+        .select('id', {
+          count: 'exact',
+          head: true,
+        })
+        .eq('staffUnread', true)
+        .in('status', ['OPEN', 'IN_PROGRESS']),
+    ),
   ])
   res.json({
     ordersNeedingAction: pending,
     toPack,
     toShip,
+    supportNeedingReply,
     outOfStock: variants.filter((v) => v.stock === 0).length,
     lowStock: variants.filter((v) => v.stock > 0 && v.stock <= (v.lowStockAt ?? settings.lowStockDefault)).length,
   })

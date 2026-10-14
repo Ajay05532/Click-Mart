@@ -27,8 +27,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     ;(async () => {
       try {
-        if (await refreshSession()) {
-          const me = await api<{ user: Me }>('/me')
+        const session = await refreshSession()
+        const restored = session?.user?.role && session.user.role !== 'CUSTOMER' ? (session.user as Me) : null
+        if (!cancelled && restored) setUser(restored)
+        else if (!session) {
+          const me = await api<{ user: Me }>('/me', {}, true)
           if (!cancelled && me.user.role !== 'CUSTOMER') setUser(me.user)
         }
       } catch {

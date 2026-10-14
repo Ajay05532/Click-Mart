@@ -5,7 +5,7 @@ import { describe, it } from 'node:test'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { env } from '../src/config/env.js'
-import { readAccessToken, signAccessToken } from '../src/services/auth.js'
+import { readAccessToken, readRefreshToken, signAccessToken, signRefreshToken } from '../src/services/auth.js'
 import { hashPassword, needsRehash, verifyPassword } from '../src/services/passwords.js'
 import { requireHttps } from '../src/middleware/https.js'
 describe('password storage', () => {
@@ -93,6 +93,29 @@ describe('JWT hardening', () => {
       null,
     )
     assert.equal(readAccessToken('not.a.token'), null)
+  })
+  it('issues a refresh JWT that an access token cannot impersonate', () => {
+    const refresh = signRefreshToken({ id: 'user-1', role: 'CUSTOMER' }, 'session-1')
+    assert.deepEqual(readRefreshToken(refresh), { id: 'user-1', role: 'CUSTOMER', jti: 'session-1' })
+    assert.equal(readAccessToken(refresh), null)
+    assert.equal(
+      readRefreshToken(
+        signAccessToken({
+          id: 'user-1',
+          role: 'CUSTOMER',
+        }),
+      ),
+      null,
+    )
+    assert.equal(
+      readRefreshToken(
+        jwt.sign({ sub: 'user-1', role: 'CUSTOMER', jti: 'session-1', typ: 'refresh' }, env.JWT_ACCESS_SECRET, {
+          algorithm: 'HS256',
+          issuer: 'clickmart',
+        }),
+      ),
+      null,
+    )
   })
   it('rejects expired tokens', () => {
     assert.equal(

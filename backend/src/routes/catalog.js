@@ -6,6 +6,7 @@ import { badRequest, notFound } from '../utils/errors.js'
 import { reviewImageUpload, storeImage } from '../services/storage.js'
 import { buildQuote, loadActiveOffers } from '../services/pricing.js'
 import { serializeProduct } from '../utils/serializers.js'
+import { env } from '../config/env.js'
 import { getSettings } from '../services/settings.js'
 import { PRODUCT_SELECT } from '../database/selects.js'
 import { actor, requireAuth } from '../middleware/auth.js'
@@ -299,7 +300,8 @@ catalogRouter.get('/settings/public', async (_req, res) => {
     shippingFee: s.shippingFee,
     codEnabled: s.codEnabled,
     codMaxOrder: s.codMaxOrder,
-    paymentProvider: process.env.PAYMENT_PROVIDER ?? 'mock',
+    paymentProvider: env.PAYMENT_PROVIDER,
+    paymentTestMode: env.PAYMENT_PROVIDER === 'razorpay' && (env.RAZORPAY_KEY_ID ?? '').startsWith('rzp_test_'),
   })
 })
 catalogRouter.post('/cart/quote', async (req, res) => {

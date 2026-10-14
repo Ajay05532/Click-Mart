@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext.tsx'
-import { api, getAccessToken } from './api.ts'
+import { api, apiUrl, getAccessToken } from './api.ts'
 
 export type OrderStatus = 'PLACED' | 'CONFIRMED' | 'PACKED' | 'SHIPPED' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED' | 'RETURNED'
 
@@ -29,37 +29,6 @@ export type ApiOrder = {
   placedAt: string
   estimatedDelivery: string
 }
-
-/** What the tracking page needs. Guests get a reduced view (no address or contact details). */
-export type TrackView = {
-  code: string
-  status: OrderStatus
-  paymentStatus: ApiOrder['paymentStatus']
-  items: OrderItem[]
-  total: number
-  events: OrderEvent[]
-  carrier: string | null
-  trackingNumber: string | null
-  placedAt: string
-  estimatedDelivery: string
-  city: string
-  name?: string
-}
-
-export const toTrackView = (order: ApiOrder): TrackView => ({
-  code: order.code,
-  status: order.status,
-  paymentStatus: order.paymentStatus,
-  items: order.items,
-  total: order.total,
-  events: order.events,
-  carrier: order.carrier,
-  trackingNumber: order.trackingNumber,
-  placedAt: order.placedAt,
-  estimatedDelivery: order.estimatedDelivery,
-  city: order.address.city,
-  name: order.customer.name,
-})
 
 export const useMyOrders = () => {
   const { user } = useAuth()
@@ -95,16 +64,10 @@ const statusToStage: Record<OrderStatus, number> = { PLACED: 0, CONFIRMED: 0, PA
 export const isEnded = (status: OrderStatus) => status === 'CANCELLED' || status === 'RETURNED'
 
 /** Index (0-4) of the furthest step reached. For cancelled/returned orders, the furthest step before the end. */
-export function stageOf(view: Pick<TrackView, 'status' | 'events'>) {
+export function stageOf(view: { status: OrderStatus; events: OrderEvent[] }) {
   if (!isEnded(view.status)) return statusToStage[view.status]
   const reached = view.events.filter((event) => !isEnded(event.status)).map((event) => statusToStage[event.status])
   return Math.max(0, ...reached)
-}
-
-export function stageTime(view: Pick<TrackView, 'events'>, index: number) {
-  const stage = trackingStages[index]!
-  const event = view.events.find((item) => (stage.statuses as readonly string[]).includes(item.status))
-  return event?.at ?? null
 }
 
 export const statusLabel: Record<OrderStatus, string> = {
@@ -127,7 +90,7 @@ export const formatDay = (value: string | number) => new Date(value).toLocaleDat
 
 /** Opens the printable invoice (needs the customer's login). */
 export async function openInvoice(code: string) {
-  const response = await fetch(`/api/v1/orders/${encodeURIComponent(code)}/invoice`, { credentials: 'include', headers: authHeader() })
+  const response = await fetch(apiUrl(`/orders/${encodeURIComponent(code)}/invoice`), { credentials: 'include', headers: authHeader() })
   if (!response.ok) throw new Error('Could not load the invoice')
   const blob = new Blob([await response.text()], { type: 'text/html' })
   window.open(URL.createObjectURL(blob), '_blank', 'noopener')

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { Router } from 'express'
 import { z } from 'zod'
-import { forbidden, HttpError, notFound, unauthorized } from '../utils/errors.js'
+import { conflict, forbidden, HttpError, notFound, unauthorized } from '../utils/errors.js'
 import { changeStatus, createOrder, failPayment, loadOrder, markPaid } from '../services/orders.js'
 import { exec, from, one, maybe, rows } from '../database/db.js'
 import { ORDER_SELECT } from '../database/selects.js'
@@ -96,6 +96,13 @@ ordersRouter.get('/orders/:code', requireAuth, async (req, res) => {
 })
 ordersRouter.post('/orders/:code/cancel', requireAuth, async (req, res) => {
   const order = await loadOwned(req, String(req.params.code))
+  if (order.status !== 'PLACED' && order.status !== 'CONFIRMED') {
+    throw conflict(
+      order.status === 'PACKED'
+        ? 'This order is packed for delivery and can no longer be cancelled.'
+        : 'This order can no longer be cancelled.',
+    )
+  }
   const reason = z
     .object({
       reason: z.string().trim().max(200).optional(),
@@ -154,6 +161,9 @@ paymentsRouter.post('/verify', async (req, res) => {
   if (!paymentProvider.verifyPayment(data.providerOrderId, data.providerPaymentId, data.signature)) {
     throw unauthorized('Payment signature is invalid')
   }
+  const attempt = await maybe(from('Payment').select('amount').eq('providerOrderId', data.providerOrderId).limit(1).maybeSingle())
+  if (!attempt) throw notFound('Payment')
+  await paymentProvider.assertCaptured(data.providerOrderId, data.providerPaymentId, attempt.amount)
   const result = await markPaid(data.providerOrderId, data.providerPaymentId)
   res.json({
     order: serializeOrder(await loadOrder(result.orderId)),

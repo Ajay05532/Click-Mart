@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { ApiError } from './lib/api.ts'
 import { StoreLayout } from './components/layout/StoreLayout.tsx'
 import { AuthProvider } from './context/AuthContext.tsx'
@@ -14,6 +14,10 @@ import { ResetPasswordPage } from './pages/ResetPasswordPage.tsx'
 import { CartPage } from './pages/CartPage.tsx'
 import { CheckoutPage } from './pages/CheckoutPage.tsx'
 import { ContactPage } from './pages/ContactPage.tsx'
+import { HelpCenterPage } from './pages/HelpCenterPage.tsx'
+import { MyRequestsPage } from './pages/MyRequestsPage.tsx'
+import { NewRequestPage } from './pages/NewRequestPage.tsx'
+import { TicketPage } from './pages/TicketPage.tsx'
 import { HomePage } from './pages/HomePage.tsx'
 import { PrivacyPage, TermsPage } from './pages/LegalPage.tsx'
 import { OrderPage } from './pages/OrderPage.tsx'
@@ -21,12 +25,16 @@ import { OrdersPage } from './pages/OrdersPage.tsx'
 import { SalePage } from './pages/SalePage.tsx'
 import { SettingsPage } from './pages/SettingsPage.tsx'
 import { WishlistPage } from './pages/WishlistPage.tsx'
-import { TrackPage } from './pages/TrackPage.tsx'
 import { NotFoundPage } from './pages/NotFoundPage.tsx'
 import { ProductPage } from './pages/ProductPage.tsx'
 import { RecipesPage } from './pages/RecipesPage.tsx'
 import { ShopPage } from './pages/ShopPage.tsx'
 import { WellnessPage } from './pages/WellnessPage.tsx'
+
+function TrackRedirect() {
+  const { id = '' } = useParams()
+  return <Navigate to={id ? `/order/${id}` : '/orders'} replace />
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -58,12 +66,16 @@ export default function App() {
                 <Route path="wishlist" element={<WishlistPage />} />
                 <Route path="settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
                 <Route path="account" element={<RequireAuth><SettingsPage /></RequireAuth>} />
-                <Route path="track" element={<TrackPage />} />
-                <Route path="track/:id" element={<TrackPage />} />
+                <Route path="track" element={<Navigate to="/orders" replace />} />
+                <Route path="track/:id" element={<TrackRedirect />} />
                 <Route path="about" element={<AboutPage />} />
                 <Route path="wellness" element={<WellnessPage />} />
                 <Route path="recipes" element={<RecipesPage />} />
                 <Route path="contact" element={<ContactPage />} />
+                <Route path="help" element={<HelpCenterPage />} />
+                <Route path="help/new" element={<NewRequestPage />} />
+                <Route path="help/tickets" element={<RequireAuth><MyRequestsPage /></RequireAuth>} />
+                <Route path="help/tickets/:code" element={<RequireAuth><TicketPage /></RequireAuth>} />
                 <Route path="login" element={<AuthPage />} />
                 <Route path="forgot-password" element={<ForgotPasswordPage />} />
                 <Route path="reset-password" element={<ResetPasswordPage />} />

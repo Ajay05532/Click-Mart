@@ -13,7 +13,9 @@ export class ApiError extends Error {
 
 let accessToken: string | null = null
 let onSessionLost: (() => void) | null = null
-let refreshing: Promise<boolean> | null = null
+let refreshing: Promise<AuthSession | null> | null = null
+
+export type AuthSession = { accessToken: string; user: { id: string; role: string } }
 
 export const setAccessToken = (token: string | null) => {
   accessToken = token
@@ -44,15 +46,16 @@ function errorFrom(status: number, json: { error?: string; details?: unknown } |
   return new ApiError(status, message, json?.details)
 }
 
-export function refreshSession(): Promise<boolean> {
+export function refreshSession(): Promise<AuthSession | null> {
   refreshing ??= fetch(`${PREFIX}/auth/refresh`, { method: 'POST', credentials: 'include' })
     .then(async (response) => {
-      if (!response.ok) return false
-      const data = (await response.json()) as { accessToken: string }
+      if (!response.ok) return null
+      const data = (await response.json()) as AuthSession
+      if (!data?.accessToken) return null
       accessToken = data.accessToken
-      return true
+      return data
     })
-    .catch(() => false)
+    .catch(() => null)
     .finally(() => {
       refreshing = null
     })

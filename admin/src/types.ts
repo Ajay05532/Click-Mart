@@ -56,3 +56,35 @@ export type Product = {
 }
 export type Category = { id: string; name: string; tagline: string; image: string | null; art: string; parentId: string | null; sortOrder: number; isActive: boolean; _count?: { products: number; subProducts: number } }
 export type Paged<T> = { items: T[]; total: number; page: number; pages: number }
+
+export type TicketStatus = 'OPEN' | 'IN_PROGRESS' | 'WAITING_CUSTOMER' | 'RESOLVED' | 'CLOSED'
+export type TicketPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'
+export type TicketCategory = 'ORDER_STATUS' | 'DELIVERY' | 'PAYMENT' | 'REFUND_RETURN' | 'PRODUCT_QUALITY' | 'WRONG_OR_MISSING' | 'ACCOUNT' | 'COUPON_OFFER' | 'OTHER'
+export type SupportTicket = {
+  id: string
+  code: string
+  subject: string
+  category: TicketCategory
+  categoryLabel: string
+  status: TicketStatus
+  priority: TicketPriority
+  source: 'ORDER' | 'HELP' | 'CONTACT'
+  customer: { id: string | null; name: string; email: string; phone: string | null }
+  assignee: { id: string; name: string } | null
+  order: { id: string; code: string; status: OrderStatus; total: number; placedAt: string } | null
+  needsReply: boolean
+  overdue: boolean
+  dueAt: string | null
+  firstResponseAt: string | null
+  lastMessageBy: 'CUSTOMER' | 'STAFF'
+  lastMessageAt: string
+  createdAt: string
+  resolvedAt: string | null
+  rating: number | null
+  ratingComment: string | null
+  preview: string | null
+}
+export type SupportMessage = { id: string; authorRole: 'CUSTOMER' | 'STAFF' | 'SYSTEM'; authorName: string; body: string; isInternal: boolean; attachments: string[]; createdAt: string }
+export type SupportStats = { open: number; inProgress: number; waiting: number; resolved: number; closed: number; unassigned: number; overdue: number; needsReply: number; createdToday: number; resolvedToday: number; avgFirstResponseMinutes: number | null; csat: number | null; csatCount: number; mine: number }
+export type Faq = { id: string; category: 'ORDERS' | 'DELIVERY' | 'PAYMENTS' | 'RETURNS' | 'PRODUCTS' | 'ACCOUNT'; question: string; answer: string; sortOrder: number; isPublished: boolean; helpfulYes: number; helpfulNo: number }
+export type CannedReply = { id: string; title: string; body: string }

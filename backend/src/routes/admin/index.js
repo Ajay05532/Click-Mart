@@ -6,6 +6,7 @@ import { staffOnly } from '../../middleware/auth.js'
 import { adminCatalogRouter } from './catalog.js'
 import { adminMarketingRouter } from './marketing.js'
 import { adminOpsRouter } from './operations.js'
+import { adminSupportRouter } from './support.js'
 export const adminRouter = Router()
 adminRouter.use(staffOnly)
 adminRouter.post('/uploads', imageUpload.single('image'), async (req, res) => {
@@ -18,3 +19,4 @@ adminRouter.post('/uploads', imageUpload.single('image'), async (req, res) => {
 adminRouter.use(adminCatalogRouter)
 adminRouter.use(adminMarketingRouter)
 adminRouter.use(adminOpsRouter)
+adminRouter.use(adminSupportRouter)

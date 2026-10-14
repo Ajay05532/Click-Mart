@@ -7,6 +7,7 @@ import { useWishlist } from '../../context/WishlistContext.tsx'
 import { featuredPack, productPath, useCategories, useProducts, useProductsByIds } from '../../lib/catalog.ts'
 import { formatPrice } from '../../lib/money.ts'
 import { storePhone, storePhoneTel } from '../../lib/store.ts'
+import { useUnreadTickets } from '../../lib/support.ts'
 import { ProductMedia } from '../product/ProductMedia.tsx'
 import {
   BellIcon,
@@ -14,6 +15,7 @@ import {
   CartIcon,
   CloseIcon,
   HeartIcon,
+  HelpIcon,
   LogoutIcon,
   MenuIcon,
   PhoneIcon,
@@ -31,10 +33,10 @@ const links = [
   { to: '/', label: 'Home', end: true },
   { to: '/shop', label: 'Shop' },
   { to: '/sale', label: 'Offers' },
-  { to: '/track', label: 'Track Order' },
   { to: '/recipes', label: 'Recipes' },
   { to: '/wellness', label: 'Health & Wellness' },
   { to: '/about', label: 'About Us' },
+  { to: '/help', label: 'Help centre' },
   { to: '/contact', label: 'Contact' },
 ]
 
@@ -47,12 +49,14 @@ const accountLinks = [
   { to: '/settings?tab=address', label: 'Saved Addresses', icon: PinIcon },
   { to: '/wishlist', label: 'Wishlist', icon: HeartIcon },
   { to: '/settings?tab=preferences', label: 'Notifications', icon: BellIcon },
+  { to: '/help/tickets', label: 'Help & Support', icon: HelpIcon },
 ]
 
 export function Header() {
   const cart = useCart()
   const wishlist = useWishlist()
   const { user, logout } = useAuth()
+  const unreadTickets = useUnreadTickets().data ?? 0
   const navigate = useNavigate()
   const location = useLocation()
   const rootRef = useRef<HTMLElement>(null)
@@ -124,7 +128,7 @@ export function Header() {
                 <PhoneIcon className="size-3.5" />
                 {storePhone}
               </a>
-              <Link to="/contact" className="hidden sm:inline">
+              <Link to="/help" className="hidden sm:inline">
                 Help
               </Link>
               <button
@@ -228,9 +232,6 @@ export function Header() {
           </Link>
           <Link to="/shop" className="rounded-full px-3.5 py-2 text-sm font-semibold text-ink/80 transition hover:bg-canvas hover:text-ink">
             Best Sellers
-          </Link>
-          <Link to="/track" className="rounded-full px-3.5 py-2 text-sm font-semibold text-ink/80 transition hover:bg-canvas hover:text-ink">
-            Track Order
           </Link>
         </nav>
           <form onSubmit={search} className="relative hidden min-w-0 flex-1 lg:block">
@@ -358,13 +359,16 @@ export function Header() {
                     {accountLinks.map((item) => (
                       <Link
                         key={item.label}
-                        to={item.to}
+                        to={item.to === '/help/tickets' && !user ? '/help' : item.to}
                         role="menuitem"
                         onClick={() => setPanel(null)}
                         className="flex items-center gap-3 px-4 py-2.5 font-medium hover:bg-canvas"
                       >
                         <item.icon className="size-5 shrink-0 text-ink/80" />
                         {item.label}
+                        {item.to === '/help/tickets' && user && unreadTickets > 0 && (
+                          <span className="ml-auto grid min-w-5 place-items-center rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-extrabold text-white">{unreadTickets}</span>
+                        )}
                       </Link>
                     ))}
                     {user && (

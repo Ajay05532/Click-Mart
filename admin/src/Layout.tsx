@@ -5,7 +5,7 @@ import { PageLoader } from './ui.tsx'
 import { useQuery } from '@tanstack/react-query'
 import { api } from './api.ts'
 
-type IconName = 'grid' | 'receipt' | 'box' | 'bars' | 'folder' | 'tag' | 'percent' | 'ticket' | 'image' | 'star' | 'users' | 'shield' | 'gear' | 'list'
+type IconName = 'grid' | 'receipt' | 'box' | 'bars' | 'folder' | 'tag' | 'percent' | 'ticket' | 'image' | 'star' | 'users' | 'shield' | 'gear' | 'list' | 'chat' | 'help'
 
 type Item = { to: string; label: string; icon: IconName; adminOnly?: boolean; end?: boolean }
 const groups: { title: string; items: Item[] }[] = [
@@ -27,6 +27,13 @@ const groups: { title: string; items: Item[] }[] = [
       { to: '/coupons', label: 'Coupons', icon: 'ticket', adminOnly: true },
       { to: '/banners', label: 'Banners', icon: 'image' },
       { to: '/reviews', label: 'Reviews', icon: 'star' },
+    ],
+  },
+  {
+    title: 'Support',
+    items: [
+      { to: '/support', label: 'Tickets', icon: 'chat' },
+      { to: '/help-content', label: 'Help content', icon: 'help' },
     ],
   },
   {
@@ -60,6 +67,8 @@ const iconPaths: Record<IconName, string> = {
   shield: 'M12 3l8 3v6c0 5-3.4 7.6-8 9-4.6-1.4-8-4-8-9V6z',
   gear: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 13a7.7 7.7 0 0 0 .1-2l2-1.2-2-3.4-2.2.6a8 8 0 0 0-1.7-1L15.2 3h-4.4L10.4 6a8 8 0 0 0-1.7 1L6.5 6.4l-2 3.4L6.5 11a7.7 7.7 0 0 0 .1 2l-2 1.2 2 3.4 2.2-.6a8 8 0 0 0 1.7 1l.4 3h4.4l.4-3a8 8 0 0 0 1.7-1l2.2.6 2-3.4z',
   list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  chat: 'M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.2-4.4A8 8 0 1 1 21 12zM8.5 11h7M8.5 14h4',
+  help: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.6 9.6a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.2 1-1.2 1.8M12 17h.01',
 }
 
 function NavIcon({ name }: { name: IconName }) {
@@ -80,12 +89,12 @@ export function Layout() {
     setOpen(false)
   }
   const current = groups.flatMap((group) => group.items).find((item) => (item.end ? location.pathname === item.to : location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)))
-  const summary = useQuery({ queryKey: ['summary'], queryFn: () => api<{ ordersNeedingAction: number; outOfStock: number; lowStock: number }>('/admin/summary'), enabled: !!user, refetchInterval: 60000 })
+  const summary = useQuery({ queryKey: ['summary'], queryFn: () => api<{ ordersNeedingAction: number; outOfStock: number; lowStock: number; supportNeedingReply: number }>('/admin/summary'), enabled: !!user, refetchInterval: 60000 })
 
   if (loading) return <div className="grid min-h-svh place-items-center text-brand"><PageLoader /></div>
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
 
-  const badge = (to: string) => (to === '/orders' ? summary.data?.ordersNeedingAction : to === '/inventory' ? (summary.data?.outOfStock ?? 0) + (summary.data?.lowStock ?? 0) : 0)
+  const badge = (to: string) => (to === '/orders' ? summary.data?.ordersNeedingAction : to === '/inventory' ? (summary.data?.outOfStock ?? 0) + (summary.data?.lowStock ?? 0) : to === '/support' ? summary.data?.supportNeedingReply : 0)
 
   return (
     <div className="min-h-svh lg:grid lg:grid-cols-[260px_1fr]">

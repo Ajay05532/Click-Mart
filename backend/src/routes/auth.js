@@ -1,16 +1,19 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import {
+  ACCESS_COOKIE,
   REFRESH_COOKIE,
+  accessCookieOptions,
   consumePasswordReset,
-  consumeRefreshToken,
   createPasswordReset,
   burnTime,
+  clearAccessCookieOptions,
   hashPassword,
   issueRefreshToken,
   needsRehash,
   refreshCookieOptions,
   clearCookieOptions,
+  renewRefreshToken,
   revokeAllRefreshTokens,
   revokeRefreshToken,
   signAccessToken,
@@ -30,12 +33,21 @@ export const publicUser = (user) => ({
   role: user.role,
   createdAt: user.createdAt,
 })
+function writeSessionCookies(res, user, refreshToken) {
+  const accessToken = signAccessToken(user)
+  res.cookie(REFRESH_COOKIE, refreshToken, refreshCookieOptions)
+  res.cookie(ACCESS_COOKIE, accessToken, accessCookieOptions)
+  return accessToken
+}
+function clearSessionCookies(res) {
+  res.clearCookie(REFRESH_COOKIE, clearCookieOptions)
+  res.clearCookie(ACCESS_COOKIE, clearAccessCookieOptions)
+}
 async function startSession(res, user) {
-  const refresh = await issueRefreshToken(user.id)
-  res.cookie(REFRESH_COOKIE, refresh, refreshCookieOptions)
+  const refresh = await issueRefreshToken(user)
   return {
     user: publicUser(user),
-    accessToken: signAccessToken(user),
+    accessToken: writeSessionCookies(res, user, refresh),
   }
 }
 const registerSchema = z.object({
@@ -83,17 +95,20 @@ authRouter.post('/login', async (req, res) => {
 })
 authRouter.post('/refresh', async (req, res) => {
   const token = req.cookies?.[REFRESH_COOKIE]
-  const user = token ? await consumeRefreshToken(token) : null
-  if (!user) {
+  const renewed = token ? await renewRefreshToken(token) : null
+  if (!renewed) {
     res.clearCookie(REFRESH_COOKIE, clearCookieOptions)
     throw unauthorized('Session expired. Please log in again.')
   }
-  res.json(await startSession(res, user))
+  res.json({
+    user: publicUser(renewed.user),
+    accessToken: writeSessionCookies(res, renewed.user, renewed.refreshToken),
+  })
 })
 authRouter.post('/logout', async (req, res) => {
   const token = req.cookies?.[REFRESH_COOKIE]
   if (token) await revokeRefreshToken(token)
-  res.clearCookie(REFRESH_COOKIE, clearCookieOptions)
+  clearSessionCookies(res)
   res.status(204).end()
 })
 authRouter.post('/change-password', requireAuth, async (req, res) => {
@@ -110,6 +125,7 @@ authRouter.post('/change-password', requireAuth, async (req, res) => {
     passwordHash: await hashPassword(data.newPassword),
   })
   await revokeAllRefreshTokens(user.id)
+  clearSessionCookies(res)
   res.status(204).end()
 })
 authRouter.post('/forgot-password', async (req, res) => {

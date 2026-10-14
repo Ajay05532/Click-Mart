@@ -80,7 +80,7 @@ export function OrdersPage() {
 const nextSteps: Record<OrderStatus, { to: OrderStatus; label: string; primary?: boolean }[]> = {
   PLACED: [{ to: 'CONFIRMED', label: 'Confirm order', primary: true }, { to: 'CANCELLED', label: 'Cancel' }],
   CONFIRMED: [{ to: 'PACKED', label: 'Mark as packed', primary: true }, { to: 'CANCELLED', label: 'Cancel' }],
-  PACKED: [{ to: 'SHIPPED', label: 'Mark as shipped', primary: true }, { to: 'CANCELLED', label: 'Cancel' }],
+  PACKED: [{ to: 'SHIPPED', label: 'Mark as shipped', primary: true }],
   SHIPPED: [{ to: 'OUT_FOR_DELIVERY', label: 'Out for delivery', primary: true }, { to: 'DELIVERED', label: 'Mark delivered' }, { to: 'RETURNED', label: 'Returned' }],
   OUT_FOR_DELIVERY: [{ to: 'DELIVERED', label: 'Mark delivered', primary: true }, { to: 'RETURNED', label: 'Returned' }],
   DELIVERED: [{ to: 'RETURNED', label: 'Mark returned' }],

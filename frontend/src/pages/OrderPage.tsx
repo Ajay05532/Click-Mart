@@ -1,21 +1,22 @@
 import { useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { CopyIcon, ReceiptIcon } from '../components/icons.tsx'
+import { CardIcon, CashIcon, CheckIcon, CopyIcon, MailIcon, PhoneIcon, PinIcon, QrIcon, ReceiptIcon } from '../components/icons.tsx'
 import { Container } from '../components/layout/Container.tsx'
-import { ProgressBar } from '../components/order/TrackingTimeline.tsx'
 import { ProductMedia } from '../components/product/ProductMedia.tsx'
+import { OrderHelp } from '../components/support/OrderHelp.tsx'
 import { EmptyState } from '../components/ui/Primitives.tsx'
 import { useAuth } from '../context/AuthContext.tsx'
 import { formatPrice } from '../lib/money.ts'
-import { formatDay, openInvoice, paymentLabel, useOrder, type ApiOrder } from '../lib/orders.ts'
+import { formatDateTime, formatDay, isEnded, openInvoice, paymentLabel, stageOf, statusLabel, trackingStages, useOrder, type ApiOrder, type OrderStatus } from '../lib/orders.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+
+const stepLabels = ['Placed', 'Packed', 'Shipped', 'On the way', 'Delivered']
 
 export function OrderPage() {
   const { id = '' } = useParams()
   const location = useLocation()
   const { user, loading } = useAuth()
   const state = location.state as { order?: ApiOrder } | null
-  // Straight after checkout the order comes with the navigation (works for guests too).
   const justPlaced = state?.order && state.order.code.toLowerCase() === id.toLowerCase() ? state.order : undefined
   const fetched = useOrder(id, !justPlaced)
   const order = justPlaced ?? fetched.data
@@ -35,19 +36,19 @@ export function OrderPage() {
         <EmptyState
           icon={<ReceiptIcon className="size-9" />}
           title={user ? 'We could not find that order' : 'Log in to see this order'}
-          text={user ? 'Check the order ID in your confirmation, or look through your recent orders.' : 'Orders are private. Log in, or track it with your order ID and the phone number you used.'}
+          text={user ? 'Check the order ID in your confirmation, or look through your recent orders.' : 'Orders are private. Log in to see this one in My orders.'}
           action={user ? { to: '/orders', label: 'My orders' } : { to: '/login', label: 'Log in' }}
         />
-        {!user && (
-          <p className="mt-4 text-center text-sm">
-            <Link to={`/track/${id}`} className="font-bold text-brand">Track with order ID and phone</Link>
-          </p>
-        )}
       </Container>
     )
   }
 
   const fresh = !!justPlaced
+  const paid = order.paymentStatus === 'PAID'
+  const ended = isEnded(order.status)
+  const failed = order.paymentStatus === 'FAILED'
+  const first = order.customer.name.trim().split(/\s+/)[0] || 'there'
+  const count = order.items.reduce((sum, line) => sum + line.quantity, 0)
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(order.code)
@@ -58,115 +59,237 @@ export function OrderPage() {
     }
   }
   const invoice = () => (user ? openInvoice(order.code).catch(() => window.print()) : window.print())
-  const paid = order.paymentStatus === 'PAID'
+
+  const headline = ended
+    ? `This order was ${order.status === 'CANCELLED' ? 'cancelled' : 'returned'}`
+    : failed
+      ? 'Payment did not go through'
+      : order.status === 'DELIVERED'
+        ? 'Delivered'
+        : fresh
+          ? `${first}, arriving ${formatDay(order.estimatedDelivery)}`
+          : `Arriving ${formatDay(order.estimatedDelivery)}`
+
+  const note = failed
+    ? 'The order was not charged. You can place it again from your cart.'
+    : ended
+      ? 'Stock has been released. The receipt of this order is below.'
+      : order.paymentMethod === 'COD'
+        ? `Pay ${formatPrice(order.total)} in cash or UPI when it arrives.`
+        : order.customer.email
+          ? `A receipt is on its way to ${order.customer.email}.`
+          : "We'll pack this fresh and update you at every step."
 
   return (
     <div className="bg-canvas">
-      <Container className="py-10 sm:py-14">
-        <div className="mx-auto max-w-3xl">
-          <div className="card relative overflow-hidden px-6 py-10 text-center sm:px-10">
-            <div className="pointer-events-none absolute -top-24 left-1/2 size-72 -translate-x-1/2 rounded-full bg-success/10 blur-3xl" />
-            <span className="motion-pop relative mx-auto grid size-20 place-items-center rounded-full bg-success text-white shadow-[0_12px_30px_-8px_rgb(21_128_61/0.6)]">
-              <svg viewBox="0 0 24 24" className="size-10" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path className="motion-draw" d="m5 12.5 4.5 4.5L19 7.5" />
-              </svg>
-            </span>
-            <h1 className="relative mt-6 text-3xl font-extrabold tracking-tight">{fresh ? 'Thank you, your order is confirmed!' : `Order ${order.code}`}</h1>
-            <p className="relative mx-auto mt-3 max-w-md text-sm leading-6 text-muted">
-              {order.customer.email ? `A confirmation has been sent to ${order.customer.email}. ` : ''}
-              We will pack your pouches fresh and keep you posted at every step.
-            </p>
-            <button
-              type="button"
-              onClick={() => void copy()}
-              className="relative mt-5 inline-flex items-center gap-2 rounded-full border border-dashed border-line bg-canvas px-4 py-2 text-sm font-bold transition hover:border-brand"
-            >
-              Order ID <span className="font-extrabold text-brand">{order.code}</span>
-              <CopyIcon className="size-4 text-muted" />
-              {copied && <span className="text-xs text-success">Copied</span>}
-            </button>
-            <div className="relative mx-auto mt-8 max-w-xl text-left">
-              <ProgressBar status={order.status} events={order.events} />
-            </div>
-            <div className="relative mt-8 flex flex-wrap justify-center gap-3">
-              <Link to={`/track/${order.code}`} state={{ order }} className="btn btn-brand btn-lg">
-                Track order
-              </Link>
-              <Link to="/shop" className="btn btn-outline btn-lg">
-                Continue shopping
-              </Link>
-            </div>
-            {!user && fresh && (
-              <p className="relative mt-5 text-sm text-muted">
-                Save this order ID. <Link to="/login?mode=register" className="font-bold text-brand">Create an account</Link> to see all your orders in one place.
+      <Container className="py-8 sm:py-12">
+        <div className="mx-auto max-w-5xl">
+          {user && (
+            <Link to="/orders" className="text-sm font-bold text-brand">
+              ← My orders
+            </Link>
+          )}
+
+          <header className="mt-5 flex flex-wrap items-end justify-between gap-6">
+            <div className="min-w-0">
+              <p className={`inline-flex items-center gap-2 text-xs font-extrabold tracking-[0.16em] uppercase ${ended || failed ? 'text-rose-700' : 'text-success'}`}>
+                <span className={`grid size-5 place-items-center rounded-full text-white ${ended || failed ? 'bg-rose-600' : 'bg-success'}`}>
+                  {ended || failed ? '!' : <CheckIcon className="size-3" />}
+                </span>
+                {ended ? statusLabel[order.status] : failed ? 'Payment failed' : fresh ? 'Order confirmed' : statusLabel[order.status]}
               </p>
-            )}
+              <h1 className="mt-3 text-3xl font-extrabold tracking-tight sm:text-4xl">{headline}</h1>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-muted">{note}</p>
+            </div>
+            <div className="text-left sm:text-right">
+              <p className="text-3xl font-extrabold tabular-nums">{formatPrice(order.total)}</p>
+              <p className="mt-1 text-sm font-bold text-muted">{paid ? 'Paid' : order.paymentMethod === 'COD' ? 'Pay on delivery' : statusLabel[order.status]}</p>
+            </div>
+          </header>
+
+          <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+            <button type="button" onClick={() => void copy()} className="inline-flex items-center gap-2 font-bold">
+              <span className="text-muted">Order</span>
+              <span className="font-mono tracking-wide">{order.code}</span>
+              <CopyIcon className="size-4 text-muted" />
+              <span className="text-xs font-bold text-success" aria-live="polite">{copied ? 'Copied' : ''}</span>
+            </button>
+            <span className="text-muted">Placed {formatDateTime(order.placedAt)}</span>
+            {!ended && !failed && <span className="text-muted">{order.address.city}, {order.address.state}</span>}
           </div>
 
-          <div className="mt-6 grid gap-6 md:grid-cols-[1.3fr_1fr]">
-            <section className="card p-5 sm:p-6">
-              <h2 className="text-lg font-extrabold">Items ({order.items.reduce((sum, line) => sum + line.quantity, 0)})</h2>
-              <ul className="mt-4 divide-y divide-line">
-                {order.items.map((line) => (
-                  <li key={`${line.name}-${line.size}`} className="flex items-center gap-4 py-3.5 first:pt-0 last:pb-0">
-                    <span className="size-16 shrink-0 overflow-hidden rounded-xl bg-canvas ring-1 ring-line">
-                      <ProductMedia name={line.name} image={line.image} art={line.art ?? 'mix'} className="size-full" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-extrabold">{line.name}</span>
-                      <span className="text-xs text-muted">{line.size} · Qty {line.quantity}</span>
-                    </span>
-                    <span className="text-sm font-extrabold">{formatPrice(line.unitPrice * line.quantity)}</span>
-                  </li>
-                ))}
+          {!user && fresh && !ended && (
+            <p className="mt-5 rounded-2xl border border-line bg-white px-5 py-4 text-sm text-ink-soft">
+              Save this order ID. <Link to="/login?mode=register" className="font-bold text-brand">Create an account</Link> to see every order in one place.
+            </p>
+          )}
+
+          {!ended && <Milestone status={order.status} />}
+
+          <div className="mt-5 grid items-start gap-5 lg:grid-cols-3">
+            <section className="card overflow-hidden lg:col-span-2">
+              <div className="flex items-center justify-between px-5 pt-5 sm:px-6">
+                <h2 className="text-sm font-extrabold tracking-wide text-muted uppercase">Items</h2>
+                <p className="text-sm font-semibold text-muted">{count} {count === 1 ? 'item' : 'items'}</p>
+              </div>
+              <ul className="divide-y divide-line px-5 sm:px-6">
+                {order.items.map((line) => {
+                  const row = (
+                    <>
+                      <span className="size-16 shrink-0 overflow-hidden rounded-2xl bg-canvas ring-1 ring-line">
+                        <ProductMedia name={line.name} image={line.image} art={line.art ?? 'mix'} className="size-full" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-extrabold">{line.name}</span>
+                        <span className="mt-0.5 block text-xs text-muted">{line.size} · Qty {line.quantity}</span>
+                      </span>
+                      <span className="text-sm font-extrabold tabular-nums">{formatPrice(line.unitPrice * line.quantity)}</span>
+                    </>
+                  )
+                  return (
+                    <li key={`${line.name}-${line.size}`}>
+                      {line.slug ? (
+                        <Link to={`/product/${line.slug}`} className="flex items-center gap-4 py-4 transition hover:opacity-80">
+                          {row}
+                        </Link>
+                      ) : (
+                        <div className="flex items-center gap-4 py-4">{row}</div>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
-              <dl className="mt-5 space-y-2.5 border-t border-dashed border-line pt-5 text-sm">
+              <dl className="space-y-2.5 border-t border-line px-5 py-5 text-sm sm:px-6">
                 <Row label="Subtotal" value={formatPrice(order.subtotal)} />
-                {order.offerDiscount > 0 && <Row label="Offers" value={`−${formatPrice(order.offerDiscount)}`} tone="success" />}
-                {order.discount > 0 && <Row label={`Discount (${order.couponCode})`} value={`−${formatPrice(order.discount)}`} tone="success" />}
-                <Row label="Delivery" value={order.shipping === 0 ? 'FREE' : formatPrice(order.shipping)} tone={order.shipping === 0 ? 'success' : undefined} />
-                <div className="flex justify-between border-t border-line pt-3 text-base font-extrabold">
-                  <dt>{paid ? 'Total paid' : 'Total to pay'}</dt>
-                  <dd>{formatPrice(order.total)}</dd>
+                {order.offerDiscount > 0 && <Row label="Offers" value={`−${formatPrice(order.offerDiscount)}`} tone="good" />}
+                {order.discount > 0 && <Row label={order.couponCode ? `Coupon ${order.couponCode}` : 'Discount'} value={`−${formatPrice(order.discount)}`} tone="good" />}
+                <Row label="Delivery" value={order.shipping === 0 ? 'Free' : formatPrice(order.shipping)} tone={order.shipping === 0 ? 'good' : undefined} />
+                <div className="flex items-center justify-between border-t border-line pt-3 text-base font-extrabold">
+                  <dt>{paid ? 'Total paid' : order.paymentMethod === 'COD' ? 'Pay on delivery' : 'Total'}</dt>
+                  <dd className="tabular-nums">{formatPrice(order.total)}</dd>
                 </div>
               </dl>
             </section>
 
-            <div className="space-y-6">
-              <section className="card p-5 sm:p-6">
-                <h2 className="text-lg font-extrabold">Delivery</h2>
-                {order.status !== 'CANCELLED' && order.status !== 'DELIVERED' && order.status !== 'RETURNED' && (
-                  <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-bold text-success">Arriving by {formatDay(order.estimatedDelivery)}</p>
-                )}
-                <p className="mt-4 text-sm font-extrabold">{order.customer.name}</p>
-                <p className="mt-1 text-sm leading-6 text-muted">
-                  {order.address.line}, {order.address.city}, {order.address.state} {order.address.pin}
-                </p>
-                {order.customer.phone && <p className="mt-1 text-sm text-muted">+91 {order.customer.phone}</p>}
+            <aside className="space-y-4">
+              <section className="card divide-y divide-line">
+                <div className="p-5">
+                  <h2 className="text-xs font-extrabold tracking-[0.14em] text-muted uppercase">Deliver to</h2>
+                  <p className="mt-3 font-extrabold">{order.customer.name}</p>
+                  <p className="mt-2 flex gap-2 text-sm leading-6 text-ink-soft">
+                    <PinIcon className="mt-1 size-4 shrink-0 text-brand" />
+                    <span className="min-w-0 break-words">{order.address.line}, {order.address.city}, {order.address.state} {order.address.pin}</span>
+                  </p>
+                  {order.customer.phone && (
+                    <p className="mt-2 flex items-center gap-2 text-sm text-ink-soft">
+                      <PhoneIcon className="size-4 shrink-0 text-brand" />
+                      {formatPhone(order.customer.phone)}
+                    </p>
+                  )}
+                  {order.customer.email && (
+                    <p className="mt-2 flex items-center gap-2 text-sm text-ink-soft">
+                      <MailIcon className="size-4 shrink-0 text-brand" />
+                      <span className="min-w-0 break-all">{order.customer.email}</span>
+                    </p>
+                  )}
+                </div>
+                <div className="p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-xs font-extrabold tracking-[0.14em] text-muted uppercase">Payment</h2>
+                    <StatusPill order={order} paid={paid} />
+                  </div>
+                  <p className="mt-3 flex items-center gap-2 font-extrabold">
+                    <PayIcon method={order.paymentMethod} />
+                    {order.payment?.detail || paymentLabel[order.paymentMethod]}
+                  </p>
+                  {(order.carrier || order.trackingNumber) && (
+                    <p className="mt-3 text-sm text-muted">
+                      {order.carrier ?? 'Courier'}{order.trackingNumber ? ` · ${order.trackingNumber}` : ''}
+                    </p>
+                  )}
+                  <div className="mt-4 flex flex-col gap-2 print:hidden">
+                    <button type="button" onClick={() => void invoice()} className="btn btn-outline w-full">
+                      <ReceiptIcon className="size-4" /> Download invoice
+                    </button>
+                    <Link to="/shop" className="btn btn-brand w-full">
+                      Continue shopping
+                    </Link>
+                  </div>
+                </div>
               </section>
-              <section className="card p-5 sm:p-6">
-                <h2 className="text-lg font-extrabold">Payment</h2>
-                <p className="mt-3 text-sm font-bold">{order.payment?.detail || paymentLabel[order.paymentMethod]}</p>
-                <p className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-extrabold ${paid ? 'bg-emerald-50 text-success' : 'bg-orange-50 text-accent-dark'}`}>
-                  {paid ? 'Paid' : order.paymentMethod === 'COD' ? 'Pay on delivery' : order.paymentStatus === 'REFUNDED' ? 'Refunded' : order.paymentStatus === 'FAILED' ? 'Payment failed' : 'Payment pending'}
-                </p>
-              </section>
-              <button type="button" onClick={() => void invoice()} className="btn btn-outline w-full print:hidden">
-                <ReceiptIcon className="size-4" /> Download invoice
-              </button>
-            </div>
+
+            </aside>
           </div>
+
+          {user && <OrderHelp order={order} />}
         </div>
       </Container>
     </div>
   )
 }
 
-function Row({ label, value, tone }: { label: string; value: string; tone?: 'success' }) {
+function Milestone({ status }: { status: OrderStatus }) {
+  const stage = stageOf({ status, events: [] })
+  const doneAll = status === 'DELIVERED'
+  const current = trackingStages[doneAll ? 4 : stage]
   return (
-    <div className={`flex justify-between ${tone === 'success' ? 'text-success' : ''}`}>
+    <section className="card mt-8 px-4 py-5 sm:px-8" aria-label="Delivery progress">
+      <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
+        <p className="font-extrabold">{current?.label}</p>
+        <p className="text-sm text-muted">{current?.note}</p>
+      </div>
+      <div className="relative">
+        <div className="absolute top-3 right-[8%] left-[8%] h-0.5 rounded-full bg-line" />
+        <div className="absolute top-3 left-[8%] h-0.5 rounded-full bg-brand" style={{ width: `${((doneAll ? 4 : stage) / 4) * 84}%` }} />
+        <ol className="relative grid grid-cols-5">
+          {trackingStages.map((item, index) => {
+            const filled = index <= stage
+            const active = index === stage && !doneAll
+            return (
+              <li key={item.key} className="flex flex-col items-center text-center">
+                <span className={`grid size-6 place-items-center rounded-full text-[10px] font-extrabold ${filled ? `bg-brand text-white ${active ? 'ring-4 ring-brand-soft' : ''}` : 'bg-white text-muted ring-1 ring-line'}`}>
+                  {filled ? <CheckIcon className="size-3.5" /> : index + 1}
+                </span>
+                <span className={`mt-2 text-[11px] font-bold sm:text-xs ${index <= stage ? 'text-ink' : 'text-muted'}`}>{stepLabels[index]}</span>
+              </li>
+            )
+          })}
+        </ol>
+      </div>
+    </section>
+  )
+}
+
+function PayIcon({ method }: { method: ApiOrder['paymentMethod'] }) {
+  const Icon = method === 'UPI' ? QrIcon : method === 'COD' ? CashIcon : CardIcon
+  return <Icon className="size-5 text-brand" />
+}
+
+function StatusPill({ order, paid }: { order: ApiOrder; paid: boolean }) {
+  const label = paid
+    ? 'Paid'
+    : order.paymentMethod === 'COD'
+      ? 'Pay on delivery'
+      : order.paymentStatus === 'REFUNDED'
+        ? 'Refunded'
+        : order.paymentStatus === 'FAILED'
+          ? 'Failed'
+          : 'Pending'
+  const tone = paid || order.paymentStatus === 'REFUNDED' ? 'bg-emerald-50 text-success' : order.paymentStatus === 'FAILED' ? 'bg-rose-50 text-rose-700' : 'bg-orange-50 text-accent-dark'
+  return <span className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold ${tone}`}>{label}</span>
+}
+
+function Row({ label, value, tone }: { label: string; value: string; tone?: 'good' }) {
+  return (
+    <div className={`flex justify-between gap-4 ${tone === 'good' ? 'font-semibold text-success' : ''}`}>
       <dt className={tone ? '' : 'text-muted'}>{label}</dt>
-      <dd className="font-semibold">{value}</dd>
+      <dd className="font-semibold tabular-nums">{value}</dd>
     </div>
   )
+}
+
+function formatPhone(value: string) {
+  const digits = value.replace(/\D/g, '').slice(-10)
+  if (digits.length !== 10) return value
+  return `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`
 }

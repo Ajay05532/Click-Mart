@@ -45,6 +45,10 @@ const tableSchema = {
   Refund: 'payment',
   Setting: 'ops',
   AuditLog: 'ops',
+  SupportTicket: 'ops',
+  SupportMessage: 'ops',
+  Faq: 'ops',
+  CannedReply: 'ops',
 }
 export function from(table) {
   return db.schema(tableSchema[table]).from(table)
@@ -65,6 +69,8 @@ export function toHttpError(error) {
         return new HttpError(400, 'That coupon has been fully claimed')
       case 'NOT_FOUND':
         return new HttpError(404, `${hint ?? 'Record'} not found`)
+      case 'TICKET_CLOSED':
+        return new HttpError(409, 'This request is closed. Please start a new one.')
       case 'BAD_STOCK':
         return new HttpError(400, hint ?? 'Invalid stock change')
       case 'BAD_TRANSITION': {
