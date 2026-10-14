@@ -68,7 +68,7 @@ function loadAddress() {
 }
 
 export function CheckoutPage() {
-  useDocumentTitle('Checkout')
+  useDocumentTitle('Checkout', { noindex: true })
   const { user } = useAuth()
   const cart = useCart()
   const { location: delivery } = useDeliveryLocation()

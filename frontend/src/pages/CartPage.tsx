@@ -15,7 +15,7 @@ import { discountPercent, formatPrice } from '../lib/money.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function CartPage() {
-  useDocumentTitle('Your Cart')
+  useDocumentTitle('Your Cart', { noindex: true })
   const { user } = useAuth()
   const { lines, count, total, pricing, quoteError, reloadQuote, updateQty, removeItem } = useCart()
   const { location: delivery } = useDeliveryLocation()

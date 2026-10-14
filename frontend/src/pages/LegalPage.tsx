@@ -1,9 +1,9 @@
 import { Container } from '../components/layout/Container.tsx'
 import { PageHero } from '../components/ui/PageHero.tsx'
-import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import { useSeo } from '../lib/seo.ts'
 
 export function PrivacyPage() {
-  useDocumentTitle('Privacy Policy')
+  useSeo({ title: 'Privacy Policy', description: 'What ClickMart keeps when you browse, sign in or place an order, and what it never stores.' })
   return (
     <div className="bg-canvas">
       <PageHero title="Privacy Policy" intro="What we keep when you browse, sign in or place an order." />
@@ -19,7 +19,7 @@ export function PrivacyPage() {
 }
 
 export function TermsPage() {
-  useDocumentTitle('Terms & Conditions')
+  useSeo({ title: 'Terms & Conditions', description: 'How ClickMart orders, shipping, coupons and returns work, in plain language.' })
   return (
     <div className="bg-canvas">
       <PageHero title="Terms & Conditions" intro="The short version of how orders, shipping and returns work." />

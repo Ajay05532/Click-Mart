@@ -21,7 +21,7 @@ export function OrderPage() {
   const fetched = useOrder(id, !justPlaced)
   const order = justPlaced ?? fetched.data
   const [copied, setCopied] = useState(false)
-  useDocumentTitle(order ? `Order ${order.code}` : 'Your order')
+  useDocumentTitle(order ? `Order ${order.code}` : 'Your order', { noindex: true })
 
   if (!order) {
     if (loading || fetched.isLoading) {

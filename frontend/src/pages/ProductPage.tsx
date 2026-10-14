@@ -16,7 +16,8 @@ import { useAuth } from '../context/AuthContext.tsx'
 import { api, errorMessage } from '../lib/api.ts'
 import { useProduct, useProductReviews, useStoreSettings } from '../lib/catalog.ts'
 import { discountPercent, formatPrice } from '../lib/money.ts'
-import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import { breadcrumbJsonLd, productJsonLd } from '../lib/jsonld.ts'
+import { useSeo, type Seo } from '../lib/seo.ts'
 import type { Product } from '../types.ts'
 
 const tabs = ['Description', 'Nutrition Facts', 'Reviews'] as const
@@ -32,10 +33,32 @@ function deliveryBy(from = new Date()) {
   return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
 }
 
+/** Title, description, social preview and structured data for a product page. */
+function productSeo(product: Product): Seo {
+  const from = Math.min(...product.packs.map((pack) => pack.price))
+  const about = (product.blurb || product.description || '').trim()
+  return {
+    title: `${product.name} — Buy Online`,
+    description: `${Number.isFinite(from) ? `From ₹${from}. ` : ''}${about || `Buy ${product.name} online from ClickMart.`}`,
+    path: `/product/${product.slug}`,
+    image: product.image,
+    type: 'product',
+    jsonLd: [
+      productJsonLd(product),
+      breadcrumbJsonLd([
+        { name: 'Home', path: '/' },
+        { name: 'Shop', path: '/shop' },
+        { name: product.categoryName ?? 'Product', path: `/shop?category=${product.category}` },
+        { name: product.name, path: `/product/${product.slug}` },
+      ]),
+    ],
+  }
+}
+
 export function ProductPage() {
   const { slug = '' } = useParams()
   const query = useProduct(slug)
-  useDocumentTitle(query.data?.product.name ?? 'Product')
+  useSeo(query.data ? productSeo(query.data.product) : { title: 'Product', noindex: !query.isLoading })
 
   if (query.isLoading) {
     return (
@@ -144,7 +167,7 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
                     onClick={() => setPhoto(index)}
                     className={`size-16 shrink-0 overflow-hidden rounded-xl border-2 bg-canvas ${index === photo ? 'border-brand' : 'border-transparent'}`}
                   >
-                    <img src={src} alt="" className="size-full object-cover" />
+                    <img src={src} alt={`${product.name}, photo ${index + 1}`} loading="lazy" decoding="async" className="size-full object-cover" />
                   </button>
                 ))}
               </div>
@@ -325,7 +348,7 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
                       <div className="mt-3 flex flex-wrap gap-2">
                         {review.images.map((src) => (
                           <a key={src} href={src} target="_blank" rel="noreferrer" className="size-16 overflow-hidden rounded-lg bg-canvas ring-1 ring-line">
-                            <img src={src} alt="" className="size-full object-cover" />
+                            <img src={src} alt="Photo from a customer review" loading="lazy" decoding="async" className="size-full object-cover" />
                           </a>
                         ))}
                       </div>

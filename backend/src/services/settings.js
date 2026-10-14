@@ -9,6 +9,9 @@ export const settingDefaults = {
   codEnabled: true,
   codMaxOrder: 5000,
   lowStockDefault: 10,
+  businessName: '',
+  gstin: '',
+  businessState: '',
 }
 export async function getSettings() {
   const data = await rows(from('Setting').select('key, value'))

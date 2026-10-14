@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { api } from '../api.ts'
 import { useAction } from '../hooks.ts'
 import type { CannedReply, Faq } from '../types.ts'
+import { replyVariables } from '../supportMeta.ts'
 import { Badge, Button, Card, EmptyState, ErrorState, Field, Input, Modal, PageHeader, PageLoader, Select, Switch, Table, Tabs, Td, Textarea, useUi } from '../ui.tsx'
 
 const faqCategories: [Faq['category'], string][] = [
@@ -109,7 +110,7 @@ function SavedReplies() {
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-sm text-muted">Insert these from the reply box on any ticket. <code className="rounded bg-canvas px-1.5 py-0.5 text-xs">{'{{name}}'}</code> becomes the customer's first name and <code className="rounded bg-canvas px-1.5 py-0.5 text-xs">{'{{order}}'}</code> their order number.</p>
+        <p className="max-w-2xl text-sm text-muted">Insert these from the reply box on any ticket. Placeholders like <code className="rounded bg-canvas px-1.5 py-0.5 text-xs">{'{{name}}'}</code> are filled in from the ticket and its order.</p>
         <Button variant="accent" onClick={() => setEditing('new')}>New reply</Button>
       </div>
       {query.isLoading ? <PageLoader /> : query.error ? <Card><ErrorState error={query.error} retry={() => void query.refetch()} /></Card> : query.data!.length === 0 ? (
@@ -141,6 +142,14 @@ function ReplyModal({ reply, onClose }: { reply: CannedReply | null; onClose: ()
       <div className="space-y-4">
         <Field label="Name"><Input value={form.title} maxLength={60} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Refund timeline" /></Field>
         <Field label="Message"><Textarea rows={8} className="h-auto py-3" maxLength={2000} value={form.body} onChange={(event) => setForm({ ...form, body: event.target.value })} placeholder={'Hi {{name}}, thanks for your patience…'} /></Field>
+        <div>
+          <p className="mb-1.5 text-xs font-bold text-ink-soft">Add a placeholder</p>
+          <div className="flex flex-wrap gap-1.5">
+            {replyVariables.map((variable) => (
+              <button key={variable.key} type="button" title={variable.hint} onClick={() => setForm((current) => ({ ...current, body: `${current.body}${current.body && !/\s$/.test(current.body) ? ' ' : ''}{{${variable.key}}}` }))} className="rounded-full bg-canvas px-3 py-1.5 font-mono text-xs font-bold text-ink-soft hover:bg-brand-soft hover:text-brand">{`{{${variable.key}}}`}</button>
+            ))}
+          </div>
+        </div>
       </div>
     </Modal>
   )

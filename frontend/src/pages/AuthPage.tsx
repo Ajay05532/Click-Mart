@@ -16,7 +16,7 @@ export function AuthPage() {
   const location = useLocation()
   const [params] = useSearchParams()
   const [mode, setMode] = useState<Mode>(params.get('mode') === 'register' ? 'register' : 'login')
-  useDocumentTitle(mode === 'login' ? 'Log in' : 'Create account')
+  useDocumentTitle(mode === 'login' ? 'Log in' : 'Create account', { noindex: true })
   const next = safeNext((location.state as { from?: string } | null)?.from ?? params.get('next'))
   const [form, setForm] = useState({ name: '', email: '', phone: '', password: '' })
   const [errors, setErrors] = useState<Record<string, string>>({})

@@ -4,6 +4,8 @@ const defaults = {
   SUPABASE_SERVICE_KEY: 'test-service-key-not-real-0000000000',
   JWT_ACCESS_SECRET: 'test-access-secret-0123456789abcdef',
   JWT_REFRESH_SECRET: 'test-refresh-secret-0123456789abcdef',
+  SUPPORT_INBOUND_EMAIL: 'support@inbound.example.com',
+  SUPPORT_INBOUND_SECRET: 'test-inbound-secret-0123456789',
   PASSWORD_PEPPER: 'test-pepper-0123456789abcdef0123456789abcdef',
 }
 for (const [key, value] of Object.entries(defaults)) process.env[key] ??= value

@@ -1,7 +1,6 @@
-import { useEffect } from 'react'
+import { useSeo, type Seo } from './seo.ts'
 
-export function useDocumentTitle(title: string) {
-  useEffect(() => {
-    document.title = title === 'ClickMart' ? title : `${title} · ClickMart`
-  }, [title])
+/** Title only (plus any other SEO field). Private pages pass { noindex: true }. */
+export function useDocumentTitle(title: string, options: Omit<Seo, 'title'> = {}) {
+  useSeo({ title, ...options })
 }

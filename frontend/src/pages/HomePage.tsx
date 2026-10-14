@@ -9,7 +9,8 @@ import { Stars } from '../components/ui/Stars.tsx'
 import { featuredPack, productPath, useActiveCoupons, useBanners, useCategories, useProducts, useStoreSettings } from '../lib/catalog.ts'
 import { testimonials } from '../data/reviews.ts'
 import { discountPercent, formatPrice } from '../lib/money.ts'
-import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import { organizationJsonLd, websiteJsonLd } from '../lib/jsonld.ts'
+import { useSeo } from '../lib/seo.ts'
 import type { Pack, Product } from '../types.ts'
 
 const showcase = [
@@ -63,7 +64,12 @@ function shelfPack(product: Product, tab: ShelfTab): Pack | undefined {
 
 
 export function HomePage() {
-  useDocumentTitle('ClickMart')
+  useSeo({
+    title: 'ClickMart · Premium dry fruits, nuts and seeds delivered across India',
+    description: 'Buy fresh almonds, cashews, raisins, walnuts and seeds online. Packed after you order in Patna, delivered across India. Pay by UPI, card or cash on delivery.',
+    path: '/',
+    jsonLd: [organizationJsonLd(), websiteJsonLd()],
+  })
   const [shelf, setShelf] = useState<ShelfTab>('all')
   const [copied, setCopied] = useState<string | null>(null)
   const [hours, minutes, seconds] = useCountdown()
@@ -199,7 +205,7 @@ export function HomePage() {
                       {product ? (
                         <ProductMedia name={product.name} image={product.image} art={product.art} className="size-[78%] rounded-full object-cover" />
                       ) : (
-                        <img src={image ?? ''} alt="" className="size-[78%] rounded-full object-cover" />
+                        <img src={image ?? ''} alt={name} loading="lazy" decoding="async" className="size-[78%] rounded-full object-cover" />
                       )}
                     </span>
                     <span className="mt-4 block text-xs font-extrabold tracking-[0.14em] text-brand-dark uppercase sm:text-sm">{name}</span>
@@ -322,7 +328,7 @@ export function HomePage() {
               </div>
               <div className="order-1 p-3 sm:p-4 lg:order-2 lg:py-4 lg:pr-4 lg:pl-0">
                 <div className="relative h-52 overflow-hidden rounded-[1.35rem] sm:h-64 lg:h-full lg:min-h-[22rem]">
-                  <img src={promo?.image ?? '/images/walnuts.jpg'} alt="" className="absolute inset-0 size-full object-cover" />
+                  <img src={promo?.image ?? '/images/walnuts.jpg'} alt="" loading="lazy" decoding="async" className="absolute inset-0 size-full object-cover" />
                 </div>
               </div>
             </div>

@@ -16,7 +16,7 @@ const tabs = [
 ] as const
 
 export function MyRequestsPage() {
-  useDocumentTitle('My requests')
+  useDocumentTitle('My requests', { noindex: true })
   const [tab, setTab] = useState<(typeof tabs)[number]['id']>('all')
   const query = useMyTickets(tab)
   const items = query.data?.items ?? []

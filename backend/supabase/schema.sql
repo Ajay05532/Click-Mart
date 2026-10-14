@@ -28,7 +28,7 @@
 --    5. Cart & wishlist   6. Orders & payments   7. Reviews & system 8. Indexes
 --    9. Foreign keys     10. Triggers           11. Business functions
 --   12. Security (RLS + grants)  13. Report views  14. Starter data  15. Image storage
---   16. Customer support
+--   16. Customer support    17. Admin and operations
 -- ============================================================================
 
 -- ============================================================================
@@ -1695,6 +1695,7 @@ CREATE TABLE IF NOT EXISTS ops."SupportTicket" (
     "dueAt" TIMESTAMPTZ(3),
     "resolvedAt" TIMESTAMPTZ(3),
     "closedAt" TIMESTAMPTZ(3),
+    "slaAlertedAt" TIMESTAMPTZ(3),
     "rating" INTEGER,
     "ratingComment" TEXT,
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1845,7 +1846,8 @@ BEGIN
       "lastMessageBy" = 'STAFF',
       "customerUnread" = true,
       "staffUnread" = false,
-      "dueAt" = NULL
+      "dueAt" = NULL,
+      "slaAlertedAt" = NULL
     WHERE "id" = p_ticket_id;
   ELSE
     UPDATE ops."SupportTicket" SET
@@ -1855,7 +1857,8 @@ BEGIN
       "lastMessageBy" = 'CUSTOMER',
       "staffUnread" = true,
       "customerUnread" = false,
-      "dueAt" = CASE WHEN t."lastMessageBy" = 'STAFF' OR t."status" = 'RESOLVED' THEN now() + make_interval(hours => support_sla_hours(t."priority")) ELSE t."dueAt" END
+      "dueAt" = CASE WHEN t."lastMessageBy" = 'STAFF' OR t."status" = 'RESOLVED' THEN now() + make_interval(hours => support_sla_hours(t."priority")) ELSE t."dueAt" END,
+      "slaAlertedAt" = CASE WHEN t."lastMessageBy" = 'STAFF' OR t."status" = 'RESOLVED' THEN NULL ELSE t."slaAlertedAt" END
     WHERE "id" = p_ticket_id;
   END IF;
   RETURN to_jsonb(m);
@@ -1964,5 +1967,44 @@ BEGIN
           allowed_mime_types = EXCLUDED.allowed_mime_types;
   END IF;
 END $$;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ============================================================================
+-- 17. Admin and operations
+-- Staff permissions and support alerts. The same statements are in
+-- migrations/2026-10-14-admin-operations.sql so they can be pasted on their own.
+-- (add_support_message in section 16 already includes the alert reset.)
+-- ============================================================================
+
+-- What each staff member may open in the admin app. Admins always have everything.
+-- Keys: orders, catalog, inventory, marketing, support, customers, reports.
+-- The default is what staff could already do, so nobody loses access when this runs.
+ALTER TABLE account."Staff" ADD COLUMN IF NOT EXISTS "permissions" TEXT[] NOT NULL DEFAULT ARRAY['orders','catalog','inventory','marketing','support','customers']::text[];
+
+DO $$ BEGIN
+  ALTER TABLE account."Staff" ADD CONSTRAINT "Staff_permissions_check"
+    CHECK ("permissions" <@ ARRAY['orders','catalog','inventory','marketing','support','customers','reports']::text[]);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Set when we told the team a ticket is past its reply target, so we tell them once.
+ALTER TABLE ops."SupportTicket" ADD COLUMN IF NOT EXISTS "slaAlertedAt" TIMESTAMPTZ(3);
+
+
+-- Tickets that just went past their reply target and have not been reported yet.
+-- Marks them reported in the same statement, so two servers never send the same alert.
+CREATE OR REPLACE FUNCTION claim_overdue_support_tickets()
+RETURNS TABLE ("id" TEXT, "number" INTEGER, "subject" TEXT, "priority" ops."TicketPriority", "dueAt" TIMESTAMPTZ, "name" TEXT)
+LANGUAGE sql
+SET search_path = account, catalog, marketing, sales, payment, ops, public
+AS $$
+  UPDATE ops."SupportTicket" t SET "slaAlertedAt" = CURRENT_TIMESTAMP
+  WHERE t."dueAt" < now() AND t."status" IN ('OPEN', 'IN_PROGRESS') AND t."slaAlertedAt" IS NULL
+  RETURNING t."id", t."number", t."subject", t."priority", t."dueAt", t."name";
+$$;
+
+REVOKE ALL ON FUNCTION claim_overdue_support_tickets() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION claim_overdue_support_tickets() TO service_role;
 
 NOTIFY pgrst, 'reload schema';

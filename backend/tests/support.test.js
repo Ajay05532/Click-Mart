@@ -99,3 +99,48 @@ describe('support API guards (no database needed)', () => {
     assert.equal(response.status, 201)
   })
 })
+
+describe('reply by email', async () => {
+  const { replyToFor, stripQuoted, ticketFromRecipient } = await import('../src/services/support.js')
+
+  it('puts the ticket number and a secret token in the reply address', () => {
+    const address = replyToFor({ number: 1042 })
+    assert.match(address, /^support\+1042\.[a-f0-9]{16}@inbound\.example\.com$/)
+    assert.equal(ticketFromRecipient(['someone@else.com', address]), 1042)
+    assert.equal(ticketFromRecipient([`Support <${address}>`]), 1042)
+  })
+
+  it('rejects a guessed or edited address', () => {
+    const address = replyToFor({ number: 1042 })
+    assert.equal(ticketFromRecipient([address.replace('1042', '1043')]), null)
+    assert.equal(ticketFromRecipient(['support+1042.0000000000000000@inbound.example.com']), null)
+    assert.equal(ticketFromRecipient(['support@inbound.example.com', null]), null)
+  })
+
+  it('keeps the new text and drops the quoted email', () => {
+    assert.equal(stripQuoted('Thanks, the batch is B-2210.\n\nOn Tue, 14 Oct 2026 at 10:04, ClickMart Support <support@x.com> wrote:\n> Hi Asha\n> Could you share it?'), 'Thanks, the batch is B-2210.')
+    assert.equal(stripQuoted('Yes please\n> older line\nMore text'), 'Yes please\nMore text')
+    assert.equal(stripQuoted('Done.\n\n-----Original Message-----\nFrom: x'), 'Done.')
+    assert.equal(stripQuoted('> only a quote'), '')
+  })
+})
+
+describe('inbound email webhook', () => {
+  let server
+  let base
+  before(async () => {
+    const { createApp } = await import('../src/app.js')
+    server = createApp().listen(0)
+    await new Promise((resolve) => server.once('listening', resolve))
+    base = `http://127.0.0.1:${server.address().port}/api/v1`
+  })
+  after(() => server.close())
+
+  it('refuses a wrong secret and ignores an address without a valid token', async () => {
+    const send = (secret, body) => fetch(`${base}/support/inbound-email?secret=${secret}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    assert.equal((await send('wrong-secret-000000000', { TextBody: 'hi' })).status, 401)
+    const ok = await send('test-inbound-secret-0123456789', { TextBody: 'hi', OriginalRecipient: 'support+1042.0000000000000000@inbound.example.com' })
+    assert.equal(ok.status, 200)
+    assert.deepEqual(await ok.json(), { ignored: 'unknown address' })
+  })
+})

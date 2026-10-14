@@ -7,7 +7,7 @@ import { useMyOrders } from '../lib/orders.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function OrdersPage() {
-  useDocumentTitle('My Orders')
+  useDocumentTitle('My Orders', { noindex: true })
   const orders = useMyOrders()
 
   return (

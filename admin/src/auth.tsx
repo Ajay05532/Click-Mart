@@ -2,12 +2,15 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { api, refreshSession, setAccessToken, setSessionLostHandler } from './api.ts'
 
 export type Role = 'CUSTOMER' | 'STAFF' | 'ADMIN'
-export type Me = { id: string; name: string; email: string; avatarUrl: string | null; role: Role }
+export type Permission = 'orders' | 'catalog' | 'inventory' | 'marketing' | 'support' | 'customers' | 'reports'
+export type Me = { id: string; name: string; email: string; avatarUrl: string | null; role: Role; permissions?: Permission[] }
 
 type AuthValue = {
   user: Me | null
   loading: boolean
   isAdmin: boolean
+  /** True for administrators, and for staff who were given this permission. */
+  can: (permission: Permission) => boolean
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
   updateProfile: (patch: { name?: string }) => Promise<void>
@@ -90,9 +93,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user],
   )
 
+  const can = useCallback((permission: Permission) => user?.role === 'ADMIN' || !!user?.permissions?.includes(permission), [user])
   const value = useMemo(
-    () => ({ user, loading, isAdmin: user?.role === 'ADMIN', login, logout, updateProfile, uploadAvatar, removeAvatar, changePassword }),
-    [user, loading, login, logout, updateProfile, uploadAvatar, removeAvatar, changePassword],
+    () => ({ user, loading, isAdmin: user?.role === 'ADMIN', can, login, logout, updateProfile, uploadAvatar, removeAvatar, changePassword }),
+    [user, loading, can, login, logout, updateProfile, uploadAvatar, removeAvatar, changePassword],
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

@@ -1,0 +1,3 @@
+# The admin area is private and must never appear in search results.
+User-agent: *
+Disallow: /

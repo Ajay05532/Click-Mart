@@ -12,7 +12,7 @@ export function ProductMedia({
   className?: string
 }) {
   if (image) {
-    return <img src={image} alt={name} className={`object-cover ${className}`} />
+    return <img src={image} alt={name} loading="lazy" decoding="async" className={`object-cover ${className}`} />
   }
   return <ProductArt name={name} art={art} className={className} />
 }

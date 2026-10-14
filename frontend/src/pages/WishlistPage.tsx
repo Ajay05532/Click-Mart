@@ -10,7 +10,7 @@ import { featuredPack, useProducts, useProductsByIds } from '../lib/catalog.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function WishlistPage() {
-  useDocumentTitle('Wishlist')
+  useDocumentTitle('Wishlist', { noindex: true })
   const wishlist = useWishlist()
   const { addItem } = useCart()
   const savedQuery = useProductsByIds(wishlist.ids)

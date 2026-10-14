@@ -1,6 +1,6 @@
 import { Container } from '../components/layout/Container.tsx'
 import { PageHero } from '../components/ui/PageHero.tsx'
-import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import { useSeo } from '../lib/seo.ts'
 
 const recipes = [
   {
@@ -26,7 +26,7 @@ const recipes = [
 ]
 
 export function RecipesPage() {
-  useDocumentTitle('Recipes')
+  useSeo({ title: 'Dry fruit recipes', description: 'Quick, simple recipes with almonds, cashews, pistachios, raisins and seeds. Ideas for breakfast, snacks and desserts from the ClickMart kitchen.' })
   return (
     <div className="bg-canvas">
       <PageHero title="Recipes" intro="Short recipes that use the pouches already in the pantry." />

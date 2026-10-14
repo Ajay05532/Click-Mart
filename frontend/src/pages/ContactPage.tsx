@@ -4,7 +4,8 @@ import { ChatIcon, ClockIcon, MailIcon, PhoneIcon, PinIcon } from '../components
 import { RequestForm } from '../components/support/RequestForm.tsx'
 import { PageHero } from '../components/ui/PageHero.tsx'
 import { storeAddress, storeEmail, storePhone, storePhoneTel } from '../lib/store.ts'
-import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import { useSeo } from '../lib/seo.ts'
+import { localBusinessJsonLd } from '../lib/jsonld.ts'
 
 const channels = [
   { icon: PhoneIcon, title: 'Call us', value: storePhone, href: `tel:${storePhoneTel}`, note: 'Mon to Sat, 9:00 to 18:00 IST' },
@@ -13,7 +14,7 @@ const channels = [
 ]
 
 export function ContactPage() {
-  useDocumentTitle('Contact us')
+  useSeo({ title: 'Contact us', description: 'Call, email or write to ClickMart in Patna. Questions about an order, a pouch or a bulk box are answered Monday to Saturday, 9:00 to 18:00 IST.', jsonLd: localBusinessJsonLd() })
   return (
     <div className="bg-canvas">
       <PageHero title="Contact us" intro="Questions about an order, a pouch or a bulk box. Reach us the way that suits you." />

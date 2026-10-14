@@ -20,6 +20,9 @@ const schema = z.object({
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
   SMTP_URL: z.string().optional(),
+  // Reply-by-email for support. Both are needed to switch it on (see docs in README).
+  SUPPORT_INBOUND_EMAIL: z.string().email().optional(),
+  SUPPORT_INBOUND_SECRET: z.string().min(16).optional(),
   MAIL_FROM: z.string().default('ClickMart <orders@clickmart.local>'),
   STORE_URL: z.string().default('http://localhost:5173'),
   ADMIN_URL: z.string().default('http://localhost:5175'),

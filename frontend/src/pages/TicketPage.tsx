@@ -14,7 +14,7 @@ import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function TicketPage() {
   const { code = '' } = useParams()
-  useDocumentTitle(code ? `Request ${code}` : 'Request')
+  useDocumentTitle(code ? `Request ${code}` : 'Request', { noindex: true })
   const client = useQueryClient()
   const query = useTicket(code)
   const ticket = query.data?.ticket

@@ -1,51 +1,52 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
-import { useAuth } from './auth.tsx'
+import { useAuth, type Permission } from './auth.tsx'
 import { PageLoader } from './ui.tsx'
 import { useQuery } from '@tanstack/react-query'
 import { api } from './api.ts'
 
-type IconName = 'grid' | 'receipt' | 'box' | 'bars' | 'folder' | 'tag' | 'percent' | 'ticket' | 'image' | 'star' | 'users' | 'shield' | 'gear' | 'list' | 'chat' | 'help'
+type IconName = 'grid' | 'receipt' | 'box' | 'bars' | 'folder' | 'tag' | 'percent' | 'ticket' | 'image' | 'star' | 'users' | 'shield' | 'gear' | 'list' | 'chat' | 'help' | 'chart'
 
-type Item = { to: string; label: string; icon: IconName; adminOnly?: boolean; end?: boolean }
+type Item = { to: string; label: string; icon: IconName; adminOnly?: boolean; perm?: Permission; end?: boolean }
 const groups: { title: string; items: Item[] }[] = [
   { title: 'Overview', items: [{ to: '/', label: 'Dashboard', icon: 'grid', end: true }] },
   {
     title: 'Sell',
     items: [
-      { to: '/orders', label: 'Orders', icon: 'receipt' },
-      { to: '/products', label: 'Products', icon: 'box' },
-      { to: '/inventory', label: 'Inventory', icon: 'bars' },
-      { to: '/categories', label: 'Categories', icon: 'folder' },
-      { to: '/brands', label: 'Brands', icon: 'tag' },
+      { to: '/orders', label: 'Orders', icon: 'receipt', perm: 'orders' },
+      { to: '/products', label: 'Products', icon: 'box', perm: 'catalog' },
+      { to: '/inventory', label: 'Inventory', icon: 'bars', perm: 'inventory' },
+      { to: '/categories', label: 'Categories', icon: 'folder', perm: 'catalog' },
+      { to: '/brands', label: 'Brands', icon: 'tag', perm: 'catalog' },
     ],
   },
   {
     title: 'Marketing',
     items: [
-      { to: '/offers', label: 'Offers', icon: 'percent' },
+      { to: '/offers', label: 'Offers', icon: 'percent', perm: 'marketing' },
       { to: '/coupons', label: 'Coupons', icon: 'ticket', adminOnly: true },
-      { to: '/banners', label: 'Banners', icon: 'image' },
-      { to: '/reviews', label: 'Reviews', icon: 'star' },
+      { to: '/banners', label: 'Banners', icon: 'image', perm: 'marketing' },
+      { to: '/reviews', label: 'Reviews', icon: 'star', perm: 'marketing' },
     ],
   },
   {
     title: 'Support',
     items: [
-      { to: '/support', label: 'Tickets', icon: 'chat' },
-      { to: '/help-content', label: 'Help content', icon: 'help' },
+      { to: '/support', label: 'Tickets', icon: 'chat', perm: 'support' },
+      { to: '/help-content', label: 'Help content', icon: 'help', perm: 'support' },
     ],
   },
   {
     title: 'People',
     items: [
-      { to: '/customers', label: 'Customers', icon: 'users' },
+      { to: '/customers', label: 'Customers', icon: 'users', perm: 'customers' },
       { to: '/staff', label: 'Team', icon: 'shield', adminOnly: true },
     ],
   },
   {
     title: 'Store',
     items: [
+      { to: '/reports', label: 'Reports', icon: 'chart', perm: 'reports' },
       { to: '/settings', label: 'Settings', icon: 'gear', adminOnly: true },
       { to: '/audit', label: 'Activity log', icon: 'list', adminOnly: true },
     ],
@@ -66,6 +67,7 @@ const iconPaths: Record<IconName, string> = {
   users: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 19a6 6 0 0 1 12 0M16 11a2.5 2.5 0 1 0 0-5M17 19a5 5 0 0 0-2.2-4.1',
   shield: 'M12 3l8 3v6c0 5-3.4 7.6-8 9-4.6-1.4-8-4-8-9V6z',
   gear: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 13a7.7 7.7 0 0 0 .1-2l2-1.2-2-3.4-2.2.6a8 8 0 0 0-1.7-1L15.2 3h-4.4L10.4 6a8 8 0 0 0-1.7 1L6.5 6.4l-2 3.4L6.5 11a7.7 7.7 0 0 0 .1 2l-2 1.2 2 3.4 2.2-.6a8 8 0 0 0 1.7 1l.4 3h4.4l.4-3a8 8 0 0 0 1.7-1l2.2.6 2-3.4z',
+  chart: 'M4 20V4M4 20h16M8 16v-5M12 16V8M16 16v-8',
   list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
   chat: 'M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.2-4.4A8 8 0 1 1 21 12zM8.5 11h7M8.5 14h4',
   help: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.6 9.6a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.2 1-1.2 1.8M12 17h.01',
@@ -80,7 +82,7 @@ function NavIcon({ name }: { name: IconName }) {
 }
 
 export function Layout() {
-  const { user, loading, isAdmin, logout } = useAuth()
+  const { user, loading, isAdmin, can, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const location = useLocation()
   const [menuPath, setMenuPath] = useState(location.pathname)
@@ -89,6 +91,9 @@ export function Layout() {
     setOpen(false)
   }
   const current = groups.flatMap((group) => group.items).find((item) => (item.end ? location.pathname === item.to : location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)))
+  useEffect(() => {
+    document.title = `${current?.label ?? 'Account'} · ClickMart Admin`
+  }, [current?.label])
   const summary = useQuery({ queryKey: ['summary'], queryFn: () => api<{ ordersNeedingAction: number; outOfStock: number; lowStock: number; supportNeedingReply: number }>('/admin/summary'), enabled: !!user, refetchInterval: 60000 })
 
   if (loading) return <div className="grid min-h-svh place-items-center text-brand"><PageLoader /></div>
@@ -109,7 +114,7 @@ export function Layout() {
         </div>
         <nav className="flex-1 overflow-y-auto px-3 pb-4" aria-label="Main">
           {groups.map((group) => {
-            const items = group.items.filter((item) => !item.adminOnly || isAdmin)
+            const items = group.items.filter((item) => (!item.adminOnly || isAdmin) && (!item.perm || can(item.perm)))
             if (!items.length) return null
             return (
               <div key={group.title} className="mt-4 first:mt-0">
@@ -177,6 +182,21 @@ export function AdminOnly({ children }: { children: React.ReactNode }) {
         <p className="text-4xl">🔒</p>
         <h1 className="mt-3 text-xl font-extrabold">Administrators only</h1>
         <p className="mt-1 text-sm text-muted">Your role does not include this section. Ask an administrator if you need access.</p>
+      </div>
+    )
+  }
+  return <>{children}</>
+}
+
+/** Shows a "no access" panel unless the signed-in person has this permission (administrators always do). */
+export function Can({ perm, children }: { perm: Permission; children: React.ReactNode }) {
+  const { can } = useAuth()
+  if (!can(perm)) {
+    return (
+      <div className="mx-auto mt-16 max-w-md rounded-2xl border border-line bg-white p-10 text-center shadow-card">
+        <p className="text-4xl">🔒</p>
+        <h1 className="mt-3 text-xl font-extrabold">You do not have access to this</h1>
+        <p className="mt-1 text-sm text-muted">Ask an administrator to turn on this part of the admin for your account.</p>
       </div>
     )
   }

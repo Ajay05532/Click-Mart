@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { lazy } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { ApiError } from './lib/api.ts'
 import { StoreLayout } from './components/layout/StoreLayout.tsx'
@@ -6,30 +7,32 @@ import { AuthProvider } from './context/AuthContext.tsx'
 import { CartProvider } from './context/CartContext.tsx'
 import { LocationProvider } from './context/LocationContext.tsx'
 import { WishlistProvider } from './context/WishlistContext.tsx'
-import { AboutPage } from './pages/AboutPage.tsx'
 import { RequireAuth } from './components/auth/RequireAuth.tsx'
-import { AuthPage } from './pages/AuthPage.tsx'
-import { ForgotPasswordPage } from './pages/ForgotPasswordPage.tsx'
-import { ResetPasswordPage } from './pages/ResetPasswordPage.tsx'
-import { CartPage } from './pages/CartPage.tsx'
-import { CheckoutPage } from './pages/CheckoutPage.tsx'
-import { ContactPage } from './pages/ContactPage.tsx'
-import { HelpCenterPage } from './pages/HelpCenterPage.tsx'
-import { MyRequestsPage } from './pages/MyRequestsPage.tsx'
-import { NewRequestPage } from './pages/NewRequestPage.tsx'
-import { TicketPage } from './pages/TicketPage.tsx'
 import { HomePage } from './pages/HomePage.tsx'
-import { PrivacyPage, TermsPage } from './pages/LegalPage.tsx'
-import { OrderPage } from './pages/OrderPage.tsx'
-import { OrdersPage } from './pages/OrdersPage.tsx'
-import { SalePage } from './pages/SalePage.tsx'
-import { SettingsPage } from './pages/SettingsPage.tsx'
-import { WishlistPage } from './pages/WishlistPage.tsx'
-import { NotFoundPage } from './pages/NotFoundPage.tsx'
-import { ProductPage } from './pages/ProductPage.tsx'
-import { RecipesPage } from './pages/RecipesPage.tsx'
-import { ShopPage } from './pages/ShopPage.tsx'
-import { WellnessPage } from './pages/WellnessPage.tsx'
+
+const AboutPage = lazy(() => import('./pages/AboutPage.tsx').then((module) => ({ default: module.AboutPage })))
+const AuthPage = lazy(() => import('./pages/AuthPage.tsx').then((module) => ({ default: module.AuthPage })))
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage.tsx').then((module) => ({ default: module.ForgotPasswordPage })))
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage.tsx').then((module) => ({ default: module.ResetPasswordPage })))
+const CartPage = lazy(() => import('./pages/CartPage.tsx').then((module) => ({ default: module.CartPage })))
+const CheckoutPage = lazy(() => import('./pages/CheckoutPage.tsx').then((module) => ({ default: module.CheckoutPage })))
+const ContactPage = lazy(() => import('./pages/ContactPage.tsx').then((module) => ({ default: module.ContactPage })))
+const HelpCenterPage = lazy(() => import('./pages/HelpCenterPage.tsx').then((module) => ({ default: module.HelpCenterPage })))
+const MyRequestsPage = lazy(() => import('./pages/MyRequestsPage.tsx').then((module) => ({ default: module.MyRequestsPage })))
+const NewRequestPage = lazy(() => import('./pages/NewRequestPage.tsx').then((module) => ({ default: module.NewRequestPage })))
+const TicketPage = lazy(() => import('./pages/TicketPage.tsx').then((module) => ({ default: module.TicketPage })))
+const PrivacyPage = lazy(() => import('./pages/LegalPage.tsx').then((module) => ({ default: module.PrivacyPage })))
+const TermsPage = lazy(() => import('./pages/LegalPage.tsx').then((module) => ({ default: module.TermsPage })))
+const OrderPage = lazy(() => import('./pages/OrderPage.tsx').then((module) => ({ default: module.OrderPage })))
+const OrdersPage = lazy(() => import('./pages/OrdersPage.tsx').then((module) => ({ default: module.OrdersPage })))
+const SalePage = lazy(() => import('./pages/SalePage.tsx').then((module) => ({ default: module.SalePage })))
+const SettingsPage = lazy(() => import('./pages/SettingsPage.tsx').then((module) => ({ default: module.SettingsPage })))
+const WishlistPage = lazy(() => import('./pages/WishlistPage.tsx').then((module) => ({ default: module.WishlistPage })))
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage.tsx').then((module) => ({ default: module.NotFoundPage })))
+const ProductPage = lazy(() => import('./pages/ProductPage.tsx').then((module) => ({ default: module.ProductPage })))
+const RecipesPage = lazy(() => import('./pages/RecipesPage.tsx').then((module) => ({ default: module.RecipesPage })))
+const ShopPage = lazy(() => import('./pages/ShopPage.tsx').then((module) => ({ default: module.ShopPage })))
+const WellnessPage = lazy(() => import('./pages/WellnessPage.tsx').then((module) => ({ default: module.WellnessPage })))
 
 function TrackRedirect() {
   const { id = '' } = useParams()

@@ -9,7 +9,7 @@ import { useCart } from '../context/CartContext.tsx'
 import { useWishlist } from '../context/WishlistContext.tsx'
 import { useActiveCoupons, useCategories, useOffers, useStoreSettings } from '../lib/catalog.ts'
 import { formatPrice } from '../lib/money.ts'
-import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import { useSeo } from '../lib/seo.ts'
 import type { CategoryId, Product } from '../types.ts'
 
 const tiers = [0, 10, 15, 20] as const
@@ -34,7 +34,7 @@ function useCountdown() {
 }
 
 export function SalePage() {
-  useDocumentTitle('On Sale')
+  useSeo({ title: 'Dry fruit offers and coupons', description: 'Today\'s deals on premium almonds, cashews, raisins and seeds, plus coupon codes you can use at checkout. Prices drop by up to the discount shown on each pack.' })
   const [tier, setTier] = useState<(typeof tiers)[number]>(0)
   const [category, setCategory] = useState<CategoryId | 'all'>('all')
   const [sort, setSort] = useState<(typeof sorts)[number]['id']>('discount')

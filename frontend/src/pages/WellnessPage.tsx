@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { Container } from '../components/layout/Container.tsx'
 import { PageHero } from '../components/ui/PageHero.tsx'
-import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import { useSeo } from '../lib/seo.ts'
 
 const notes = [
   {
@@ -22,7 +22,7 @@ const notes = [
 ]
 
 export function WellnessPage() {
-  useDocumentTitle('Health & Wellness')
+  useSeo({ title: 'Health & Wellness', description: 'How to enjoy almonds, walnuts, dates and seeds through the week. Practical, no-hype ideas for everyday eating.' })
   return (
     <div className="bg-canvas">
       <PageHero

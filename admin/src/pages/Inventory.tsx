@@ -3,6 +3,8 @@ import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api.ts'
 import { dateTime, label } from '../format.ts'
+import { CsvImport } from '../CsvImport.tsx'
+import { ExportButton } from '../ExportButton.tsx'
 import { useAction } from '../hooks.ts'
 import { Badge, Button, Card, EmptyState, ErrorState, Field, Input, Modal, PageHeader, PageLoader, Pagination, Select, SearchBox, Table, Tabs, Td, Textarea, Thumb } from '../ui.tsx'
 
@@ -17,6 +19,7 @@ export function InventoryPage() {
   const [page, setPage] = useState(1)
   const [adjust, setAdjust] = useState<Row | null>(null)
   const [history, setHistory] = useState<Row | null>(null)
+  const [bulk, setBulk] = useState(false)
   const set = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params)
     for (const [key, value] of Object.entries(patch)) {
@@ -31,7 +34,7 @@ export function InventoryPage() {
 
   return (
     <>
-      <PageHeader title="Inventory" subtitle="Live stock for every pack size. Every change is logged." actions={<SearchBox value={q} onChange={(value) => set({ q: value || null })} placeholder="Search product" />} />
+      <PageHeader title="Inventory" subtitle="Live stock for every pack size. Every change is logged." actions={<><SearchBox value={q} onChange={(value) => set({ q: value || null })} placeholder="Search product" /><ExportButton report="stock">Export</ExportButton><Button variant="outline" onClick={() => setBulk(true)}>Bulk update</Button></>} />
       <div className="mb-4"><Tabs value={filter} onChange={(value) => set({ filter: value })} items={[{ id: 'all', label: 'All', count: summary?.variants }, { id: 'low', label: 'Low stock', count: summary?.low }, { id: 'out', label: 'Out of stock', count: summary?.out }]} /></div>
       <Card>
         {list.isLoading ? <PageLoader /> : list.error ? <ErrorState error={list.error} retry={() => void list.refetch()} /> : list.data!.items.length === 0 ? <EmptyState title="Nothing here" text="No pack sizes match this filter." /> : (
@@ -52,6 +55,7 @@ export function InventoryPage() {
           </>
         )}
       </Card>
+      {bulk && <CsvImport kind="stock" onClose={() => setBulk(false)} />}
       {adjust && <AdjustModal row={adjust} onClose={() => setAdjust(null)} />}
       {history && <HistoryModal row={history} onClose={() => setHistory(null)} />}
     </>

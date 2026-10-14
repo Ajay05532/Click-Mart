@@ -24,7 +24,8 @@ import { badRequest, conflict, unauthorized } from '../utils/errors.js'
 import { env } from '../config/env.js'
 import { sendMail } from '../services/mailer.js'
 import { actor, requireAuth } from '../middleware/auth.js'
-export const publicUser = (user) => ({
+import { permissionsFor } from '../services/permissions.js'
+export const publicUser = (user, permissions) => ({
   id: user.id,
   name: user.name,
   email: user.email,
@@ -32,7 +33,12 @@ export const publicUser = (user) => ({
   avatarUrl: user.avatarUrl ?? null,
   role: user.role,
   createdAt: user.createdAt,
+  ...(permissions ? { permissions } : {}),
 })
+/** The user as the apps see it. Team members also get what they may open in the admin app. */
+export async function sessionUser(user) {
+  return publicUser(user, user.role === 'CUSTOMER' ? undefined : await permissionsFor(user.id, user.role))
+}
 function writeSessionCookies(res, user, refreshToken) {
   const accessToken = signAccessToken(user)
   res.cookie(REFRESH_COOKIE, refreshToken, refreshCookieOptions)
@@ -46,7 +52,7 @@ function clearSessionCookies(res) {
 async function startSession(res, user) {
   const refresh = await issueRefreshToken(user)
   return {
-    user: publicUser(user),
+    user: await sessionUser(user),
     accessToken: writeSessionCookies(res, user, refresh),
   }
 }
@@ -101,7 +107,7 @@ authRouter.post('/refresh', async (req, res) => {
     throw unauthorized('Session expired. Please log in again.')
   }
   res.json({
-    user: publicUser(renewed.user),
+    user: await sessionUser(renewed.user),
     accessToken: writeSessionCookies(res, renewed.user, renewed.refreshToken),
   })
 })
