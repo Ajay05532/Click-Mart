@@ -1,6 +1,7 @@
 import { Container } from '../components/layout/Container.tsx'
 import { PageHero } from '../components/ui/PageHero.tsx'
-import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import { useSeo } from '../lib/seo.ts'
+import { organizationJsonLd } from '../lib/jsonld.ts'
 
 const values = [
   { title: 'Handpicked', text: 'Every lot is checked for size, colour and freshness before it is packed.' },
@@ -9,7 +10,7 @@ const values = [
 ]
 
 export function AboutPage() {
-  useDocumentTitle('About Us')
+  useSeo({ title: 'About Us', description: 'ClickMart began as a small packing desk in Patna. We pack premium almonds, cashews, raisins, walnuts and seeds fresh after you order, and deliver across India.', jsonLd: organizationJsonLd() })
   return (
     <div className="bg-canvas">
       <PageHero

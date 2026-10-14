@@ -6,7 +6,8 @@ import { Breadcrumbs } from '../components/ui/Breadcrumbs.tsx'
 import { CloseIcon } from '../components/icons.tsx'
 import { packCards, useCategories, useProducts } from '../lib/catalog.ts'
 import { formatPrice } from '../lib/money.ts'
-import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import { breadcrumbJsonLd } from '../lib/jsonld.ts'
+import { useSeo } from '../lib/seo.ts'
 import type { Category, CategoryId, PackSize } from '../types.ts'
 
 const PAGE_SIZE = 12
@@ -14,7 +15,6 @@ const PRICE_CAP = 1500
 const packSizes: PackSize[] = ['100g', '250g', '500g', '1kg']
 
 export function ShopPage() {
-  useDocumentTitle('Shop')
   const [params, setParams] = useSearchParams()
   const query = (params.get('q') ?? '').trim().toLowerCase()
   const selectedCategories = params.getAll('category')
@@ -68,6 +68,18 @@ export function ShopPage() {
   const total = result.data?.total ?? 0
   const pages = result.data?.pages ?? 1
   const chosen = categories.filter((category) => selectedCategories.includes(category.id))
+  // A single category (and sub-category) page is worth indexing. Searches, sorting and mixed filters are not.
+  const onlyCategory = [...params.keys()].every((key) => key === 'category' || key === 'sub') && selectedCategories.length <= 1
+  const seoCategory = selectedCategories.length === 1 ? categories.find((category) => category.id === selectedCategories[0]) : undefined
+  const seoSub = seoCategory?.subcategories.find((item) => item.id === sub)
+  const seoName = seoSub?.name ?? seoCategory?.name
+  useSeo({
+    title: query ? `Results for “${params.get('q')}”` : seoName ? `Buy ${seoName} Online` : 'Shop Dry Fruits, Nuts and Seeds Online',
+    description: seoName ? `${seoCategory?.tagline ? `${seoCategory.tagline} ` : ''}Buy ${seoName} online from ClickMart. Packed fresh to order and delivered across India.` : 'Browse premium almonds, cashews, raisins, walnuts and seeds. Packed fresh to order, delivered across India, with cash on delivery available.',
+    path: `/shop${seoCategory ? `?category=${seoCategory.id}${seoSub ? `&sub=${seoSub.id}` : ''}` : ''}`,
+    noindex: !onlyCategory,
+    jsonLd: breadcrumbJsonLd([{ name: 'Home', path: '/' }, { name: 'Shop', path: '/shop' }, ...(seoCategory ? [{ name: seoCategory.name, path: `/shop?category=${seoCategory.id}` }] : [])]),
+  })
   const activeCategory = chosen.length === 1 ? chosen[0] : undefined
   const activeSub = activeCategory?.subcategories.find((item) => item.id === sub)
   const toggleCategory = (id: CategoryId) => {

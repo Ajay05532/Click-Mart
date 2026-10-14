@@ -8,7 +8,7 @@ import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 /** /help/new, optionally /help/new?topic=DELIVERY&order=ORD-1044 (links from the order page). */
 export function NewRequestPage() {
-  useDocumentTitle('Ask for help')
+  useDocumentTitle('Ask for help', { noindex: true })
   const [params] = useSearchParams()
   const topic = topics.find((item) => item.id === params.get('topic'))?.id as TopicId | undefined
   const order = params.get('order') ?? undefined

@@ -23,3 +23,18 @@ export function dueLabel(ticket: Pick<SupportTicket, 'dueAt' | 'overdue' | 'stat
   if (!ticket.dueAt || !['OPEN', 'IN_PROGRESS'].includes(ticket.status)) return null
   return ticket.overdue ? `Overdue by ${timeAgo(ticket.dueAt).replace(' ago', '')}` : `Reply ${timeAgo(ticket.dueAt)}`
 }
+
+/** Placeholders a saved reply can use. They are filled in from the ticket when the reply is inserted. */
+export const replyVariables: { key: string; hint: string }[] = [
+  { key: 'name', hint: "Customer's first name" },
+  { key: 'agent', hint: 'Your first name' },
+  { key: 'ticket', hint: 'Ticket number, like TKT-1042' },
+  { key: 'order', hint: 'Order number, like ORD-1044' },
+  { key: 'total', hint: 'Order total' },
+  { key: 'status', hint: 'Order status' },
+  { key: 'tracking', hint: 'Courier tracking number' },
+]
+
+export function fillReply(body: string, values: Record<string, string>) {
+  return body.replace(/\{\{\s*([a-z]+)\s*\}\}/gi, (match, key: string) => values[key.toLowerCase()] ?? match)
+}

@@ -1,9 +1,11 @@
+import { timingSafeEqual } from 'node:crypto'
 import { Router } from 'express'
 import { z } from 'zod'
 import { findAccountById } from '../services/account.js'
 import { count, exec, from, maybe, one, rows, rpc } from '../database/db.js'
 import { actor, requireAuth } from '../middleware/auth.js'
-import { badRequest, notFound } from '../utils/errors.js'
+import { badRequest, notFound, unauthorized } from '../utils/errors.js'
+import { env } from '../config/env.js'
 import { storeImage, supportUpload } from '../services/storage.js'
 import {
   attachmentsSchema,
@@ -11,12 +13,14 @@ import {
   faqCategories,
   claimGuestTickets,
   findLinkableOrder,
+  inboundEnabled,
   messageText,
   notifyTicketCreated,
   ordersById,
   parseOrderCode,
   parseTicketCode,
   previewsFor,
+  receiveEmailReply,
   serializeMessage,
   serializeTicketForCustomer,
   startingPriority,
@@ -94,6 +98,24 @@ supportRouter.post('/contact', async (req, res) => {
   const order = data.orderCode ? await findLinkableOrder(data.orderCode, { userId, email: data.email }) : null
   const ticket = await openTicket({ ...data, userId, order, source: 'CONTACT' })
   res.status(201).json({ ticket: { code: ticketCode(ticket.number) } })
+})
+
+/**
+ * Mail provider webhook (Postmark inbound format). Turned on by SUPPORT_INBOUND_EMAIL and
+ * SUPPORT_INBOUND_SECRET. The provider is configured with .../support/inbound-email?secret=<secret>.
+ */
+supportRouter.post('/inbound-email', async (req, res) => {
+  if (!inboundEnabled()) throw notFound('Route')
+  const given = Buffer.from(String(req.query.secret ?? req.headers['x-inbound-secret'] ?? ''))
+  const expected = Buffer.from(env.SUPPORT_INBOUND_SECRET)
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) throw unauthorized('Invalid secret')
+  const result = await receiveEmailReply(
+    z
+      .object({})
+      .passthrough()
+      .parse(req.body ?? {}),
+  )
+  res.json(result)
 })
 
 /* ---------------- Signed-in customers ---------------- */

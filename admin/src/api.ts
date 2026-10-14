@@ -94,10 +94,38 @@ export async function api<T = unknown>(path: string, options: Options = {}, retr
   return json as T
 }
 
-/** Fetches an authenticated HTML page (invoices) and opens it in a new tab. */
-export async function openHtml(path: string) {
+async function authorised(path: string) {
   const response = await fetch(`${PREFIX}${path}`, { credentials: 'include', headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} })
-  if (!response.ok) throw new ApiError(response.status, 'Could not load the document')
-  const blob = new Blob([await response.text()], { type: 'text/html' })
+  if (!response.ok) {
+    let message = 'Could not load the document'
+    try {
+      const json = (await response.json()) as { error?: string }
+      if (json?.error) message = json.error
+    } catch {
+      // keep the generic message
+    }
+    throw new ApiError(response.status, message)
+  }
+  return response
+}
+
+/** Fetches an authenticated HTML page (invoices, packing slips) and opens it in a new tab. */
+export async function openHtml(path: string) {
+  const blob = new Blob([await (await authorised(path)).text()], { type: 'text/html' })
   window.open(URL.createObjectURL(blob), '_blank', 'noopener')
+}
+
+/** Downloads an authenticated file (a CSV report) using the name the server suggests. */
+export async function downloadFile(path: string, fallbackName = 'download.csv') {
+  const response = await authorised(path)
+  const header = response.headers.get('content-disposition') ?? ''
+  const name = /filename="?([^";]+)"?/i.exec(header)?.[1] ?? fallbackName
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name
+  document.body.append(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }

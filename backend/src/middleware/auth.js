@@ -1,4 +1,5 @@
 import { ACCESS_COOKIE, readAccessToken } from '../services/auth.js'
+import { permissionsFor, requiredPermission } from '../services/permissions.js'
 import { forbidden, unauthorized } from '../utils/errors.js'
 function attach(req) {
   const header = req.headers.authorization
@@ -28,4 +29,22 @@ export const adminOnly = requireRole('ADMIN')
 export const actor = (req) => {
   if (!req.auth) throw unauthorized()
   return req.auth
+}
+
+/**
+ * Applied to every admin route after staffOnly. Looks at the URL, works out which permission
+ * it needs and checks that the signed-in person has it. Administrators pass everything.
+ */
+export async function permissionGate(req, _res, next) {
+  try {
+    const needed = requiredPermission(req.path)
+    if (!needed) return next()
+    attach(req)
+    if (!req.auth) throw unauthorized()
+    const allowed = await permissionsFor(req.auth.id, req.auth.role)
+    if (!allowed.includes(needed)) throw forbidden('Your account does not have access to this. Ask an administrator.')
+    next()
+  } catch (error) {
+    next(error)
+  }
 }

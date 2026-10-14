@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
-import { Layout } from './Layout.tsx'
+import { Can, Layout } from './Layout.tsx'
 import { BannersPage } from './pages/Banners.tsx'
 import { BrandsPage } from './pages/Brands.tsx'
 import { CategoriesPage } from './pages/Categories.tsx'
@@ -12,6 +12,7 @@ import { OffersPage } from './pages/Offers.tsx'
 import { OrdersPage } from './pages/Orders.tsx'
 import { ProductsPage } from './pages/Products.tsx'
 import { ReviewsPage } from './pages/Reviews.tsx'
+import { ReportsPage } from './pages/Reports.tsx'
 import { SupportPage } from './pages/Support.tsx'
 import { SupportContentPage } from './pages/SupportContent.tsx'
 import { SupportTicketPage } from './pages/SupportTicket.tsx'
@@ -27,19 +28,20 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route element={<Layout />}>
         <Route index element={<DashboardPage />} />
-        <Route path="orders" element={<OrdersPage />} />
-        <Route path="products" element={<ProductsPage />} />
-        <Route path="inventory" element={<InventoryPage />} />
-        <Route path="categories" element={<CategoriesPage />} />
-        <Route path="brands" element={<BrandsPage />} />
-        <Route path="offers" element={<OffersPage />} />
+        <Route path="orders" element={<Can perm="orders"><OrdersPage /></Can>} />
+        <Route path="products" element={<Can perm="catalog"><ProductsPage /></Can>} />
+        <Route path="inventory" element={<Can perm="inventory"><InventoryPage /></Can>} />
+        <Route path="categories" element={<Can perm="catalog"><CategoriesPage /></Can>} />
+        <Route path="brands" element={<Can perm="catalog"><BrandsPage /></Can>} />
+        <Route path="offers" element={<Can perm="marketing"><OffersPage /></Can>} />
         <Route path="coupons" element={<CouponsPage />} />
-        <Route path="banners" element={<BannersPage />} />
-        <Route path="reviews" element={<ReviewsPage />} />
-        <Route path="support" element={<SupportPage />} />
-        <Route path="support/:id" element={<SupportTicketPage />} />
-        <Route path="help-content" element={<SupportContentPage />} />
-        <Route path="customers" element={<CustomersPage />} />
+        <Route path="banners" element={<Can perm="marketing"><BannersPage /></Can>} />
+        <Route path="reviews" element={<Can perm="marketing"><ReviewsPage /></Can>} />
+        <Route path="support" element={<Can perm="support"><SupportPage /></Can>} />
+        <Route path="support/:id" element={<Can perm="support"><SupportTicketPage /></Can>} />
+        <Route path="reports" element={<Can perm="reports"><ReportsPage /></Can>} />
+        <Route path="help-content" element={<Can perm="support"><SupportContentPage /></Can>} />
+        <Route path="customers" element={<Can perm="customers"><CustomersPage /></Can>} />
         <Route path="staff" element={<StaffPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="audit" element={<AuditPage />} />

@@ -7,7 +7,7 @@ import { useAction } from '../hooks.ts'
 import { dateTime, inr, label, minutesText, timeAgo } from '../format.ts'
 import type { CannedReply, Order, SupportMessage, SupportTicket, TicketPriority, TicketStatus } from '../types.ts'
 import { Badge, Button, Card, ErrorState, PageLoader, Select, Textarea, errorMessage } from '../ui.tsx'
-import { dueLabel, priorityTone, statusText, statusTone } from '../supportMeta.ts'
+import { dueLabel, fillReply, priorityTone, statusText, statusTone } from '../supportMeta.ts'
 
 type Detail = { ticket: SupportTicket; messages: SupportMessage[]; order: Order | null; history: { id: string; code: string; subject: string; status: TicketStatus; createdAt: string }[] }
 
@@ -74,7 +74,15 @@ export function SupportTicketPage() {
   const insertReply = (replyId: string) => {
     const reply = canned.data?.find((item) => item.id === replyId)
     if (!reply) return
-    const body = reply.body.replaceAll('{{name}}', first).replaceAll('{{order}}', ticket.order?.code ?? 'your order')
+    const body = fillReply(reply.body, {
+      name: first,
+      agent: user?.name.split(' ')[0] ?? 'ClickMart Support',
+      ticket: ticket.code,
+      order: order?.code ?? ticket.order?.code ?? 'your order',
+      total: order ? inr(order.total) : '',
+      status: order ? label(order.status).toLowerCase() : '',
+      tracking: order?.trackingNumber ?? 'not available yet',
+    })
     setText((current) => (current ? `${current}\n\n${body}` : body))
     setMode('reply')
   }

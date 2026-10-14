@@ -42,6 +42,24 @@ export function OrdersPage() {
 
   const list = useQuery({ queryKey: ['orders', status, q, page], queryFn: () => api<Paged<Order> & { statusCounts: Record<string, number> }>('/admin/orders', { query: { status, q, page } }), placeholderData: (prev) => prev })
   const counts = list.data?.statusCounts ?? {}
+  const { toast } = useUi()
+  // The selection belongs to the page it was made on: changing the filter, search or page clears it.
+  const selectionKey = `${status}|${q}|${page}`
+  const [selection, setSelection] = useState<{ key: string; ids: string[] }>({ key: selectionKey, ids: [] })
+  const picked = selection.key === selectionKey ? selection.ids : []
+  const pickIds = (ids: string[]) => setSelection({ key: selectionKey, ids })
+  const pageOrders = list.data?.items ?? []
+  const chosen = pageOrders.filter((order) => picked.includes(order.id))
+  const allOn = (target: OrderStatus) => chosen.length > 0 && chosen.every((order) => order.status === target)
+  const print = (kind: 'packing-slips' | 'pick-list' | 'labels') => openHtml(`/admin/print/${kind}?ids=${picked.join(',')}`).catch((error) => toast(errorMessage(error), 'error'))
+  const bulkStatus = useAction((to: 'CONFIRMED' | 'PACKED') => api<{ results: { id: string; ok: boolean; message?: string }[] }>('/admin/orders/bulk-status', { body: { ids: picked, status: to } }), {
+    success: (result) => {
+      const failed = result.results.filter((item) => !item.ok)
+      return failed.length ? `${result.results.length - failed.length} updated, ${failed.length} could not be changed: ${failed[0].message}` : `${result.results.length} order${result.results.length === 1 ? '' : 's'} updated`
+    },
+    invalidate: ['orders', 'summary'],
+    onDone: () => pickIds([]),
+  })
   const all = Object.values(counts).reduce((sum, n) => sum + n, 0)
 
   return (
@@ -55,9 +73,22 @@ export function OrdersPage() {
           <EmptyState title="No orders here" text="Orders matching this filter will show up here." />
         ) : (
           <>
-            <Table head={['Order', 'Customer', 'Items', 'Total', 'Payment', 'Status', 'Placed']}>
+            {picked.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 border-b border-line bg-brand-soft/60 px-5 py-3">
+                <span className="mr-1 text-sm font-extrabold">{picked.length} selected</span>
+                <Button size="sm" variant="outline" onClick={() => void print('packing-slips')}>Packing slips</Button>
+                <Button size="sm" variant="outline" onClick={() => void print('pick-list')}>Pick list</Button>
+                <Button size="sm" variant="outline" onClick={() => void print('labels')}>Address labels</Button>
+                {allOn('PLACED') && <Button size="sm" variant="primary" loading={bulkStatus.isPending} onClick={() => bulkStatus.mutate('CONFIRMED')}>Confirm {picked.length}</Button>}
+                {allOn('CONFIRMED') && <Button size="sm" variant="primary" loading={bulkStatus.isPending} onClick={() => bulkStatus.mutate('PACKED')}>Mark {picked.length} as packed</Button>}
+                {!allOn('PLACED') && !allOn('CONFIRMED') && <span className="text-xs text-muted">Select orders with the same status to confirm or pack them together.</span>}
+                <Button size="sm" variant="ghost" className="ml-auto" onClick={() => pickIds([])}>Clear</Button>
+              </div>
+            )}
+            <Table head={[<input key="all" type="checkbox" aria-label="Select every order on this page" className="size-4 cursor-pointer accent-[var(--color-brand)]" checked={pageOrders.length > 0 && chosen.length === pageOrders.length} onChange={(event) => pickIds(event.target.checked ? pageOrders.map((order) => order.id) : [])} />, 'Order', 'Customer', 'Items', 'Total', 'Payment', 'Status', 'Placed']}>
               {list.data!.items.map((order) => (
-                <tr key={order.id} onClick={() => set({ open: order.id })} className="cursor-pointer hover:bg-canvas/60">
+                <tr key={order.id} onClick={() => set({ open: order.id })} className={`cursor-pointer hover:bg-canvas/60 ${picked.includes(order.id) ? 'bg-brand-soft/40' : ''}`}>
+                  <Td className="w-10"><input type="checkbox" aria-label={`Select order ${order.code}`} className="size-4 cursor-pointer accent-[var(--color-brand)]" checked={picked.includes(order.id)} onClick={(event) => event.stopPropagation()} onChange={(event) => pickIds(event.target.checked ? [...picked, order.id] : picked.filter((id) => id !== order.id))} /></Td>
                   <Td className="font-bold text-brand">{order.code}</Td>
                   <Td><p className="font-semibold">{order.customer.name}</p><p className="text-xs text-muted">{order.address.city}</p></Td>
                   <Td className="text-muted">{order.items.reduce((sum, item) => sum + item.quantity, 0)}</Td>
@@ -114,6 +145,8 @@ function OrderDrawer({ id, onClose }: { id: string; onClose: () => void }) {
               <Button variant="danger" size="sm" loading={refund.isPending} onClick={async () => { if (await confirm({ title: 'Refund this order?', text: `${inr(order.total)} will be returned to the customer's payment method.`, confirmLabel: 'Refund', danger: true })) refund.mutate(undefined) }}>Refund {inr(order.total)}</Button>
             )}
             <Button variant="ghost" size="sm" onClick={() => openHtml(`/admin/orders/${id}/invoice`).catch((error) => toast(errorMessage(error), 'error'))}>Print invoice</Button>
+            <Button variant="ghost" size="sm" onClick={() => openHtml(`/admin/print/packing-slips?ids=${id}`).catch((error) => toast(errorMessage(error), 'error'))}>Packing slip</Button>
+            <Button variant="ghost" size="sm" onClick={() => openHtml(`/admin/print/labels?ids=${id}`).catch((error) => toast(errorMessage(error), 'error'))}>Label</Button>
           </div>
 
           <section>

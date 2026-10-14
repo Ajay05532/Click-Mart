@@ -37,5 +37,9 @@ services:
         sync: false
       - key: COOKIE_SAMESITE
         value: none
+      - key: SUPPORT_INBOUND_EMAIL
+        sync: false
+      - key: SUPPORT_INBOUND_SECRET
+        sync: false
       - key: PAYMENT_PROVIDER
         value: razorpay

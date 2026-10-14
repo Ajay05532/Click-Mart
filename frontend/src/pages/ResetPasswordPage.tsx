@@ -5,7 +5,7 @@ import { api, errorMessage } from '../lib/api.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function ResetPasswordPage() {
-  useDocumentTitle('Choose a new password')
+  useDocumentTitle('Choose a new password', { noindex: true })
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const token = params.get('token') ?? ''

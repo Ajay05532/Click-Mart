@@ -11,7 +11,8 @@ import { storeEmail, storePhone, storePhoneTel } from '../lib/store.ts'
 import { api } from '../lib/api.ts'
 import { faqCategoryLabel, isActiveTicket, statusInfo, timeAgo, useFaqs, useMyTickets, type Faq, type FaqCategory } from '../lib/support.ts'
 import { Badge } from '../components/ui/Primitives.tsx'
-import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
+import { faqJsonLd } from '../lib/jsonld.ts'
+import { useSeo } from '../lib/seo.ts'
 
 const quick = [
   { to: '/orders', label: 'Track an order', text: 'See where your pouches are right now', icon: TruckIcon },
@@ -30,7 +31,6 @@ const readVotes = (): Record<string, boolean> => {
 }
 
 export function HelpCenterPage() {
-  useDocumentTitle('Help centre')
   const { user } = useAuth()
   const settings = useStoreSettings()
   const faqQuery = useFaqs()
@@ -43,6 +43,7 @@ export function HelpCenterPage() {
   // Articles the team published replace the built-in answers.
   const published = faqQuery.data ?? []
   const faqs: Faq[] = published.length ? published : defaultFaqs
+  useSeo({ title: 'Help centre', description: 'Answers about orders, delivery, payments, refunds and returns, plus a team that replies to every request. ClickMart support, Monday to Saturday.', jsonLd: faqJsonLd(faqs) })
   const categories = useMemo(() => (Object.keys(faqCategoryLabel) as FaqCategory[]).filter((id) => faqs.some((faq) => faq.category === id)), [faqs])
   const words = term.toLowerCase().split(/\s+/).filter(Boolean)
   const visible = faqs.filter((faq) => (category === 'ALL' || faq.category === category) && words.every((word) => `${faq.question} ${faq.answer}`.toLowerCase().includes(word)))

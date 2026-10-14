@@ -5,7 +5,7 @@ import { from, count, db, exec, maybe, one, rows, rpc } from '../database/db.js'
 import { badRequest, notFound } from '../utils/errors.js'
 import { imageUpload, storeImage } from '../services/storage.js'
 import { actor, requireAuth } from '../middleware/auth.js'
-import { publicUser } from './auth.js'
+import { sessionUser } from './auth.js'
 import { locationRouter } from './location.js'
 import { walletRouter } from './wallet.js'
 export const meRouter = Router()
@@ -14,7 +14,7 @@ meRouter.get('/', async (req, res) => {
   const user = await findAccountById(actor(req).id)
   if (!user) throw notFound('Account')
   res.json({
-    user: publicUser(user),
+    user: await sessionUser(user),
   })
 })
 meRouter.patch('/', async (req, res) => {
@@ -32,7 +32,7 @@ meRouter.patch('/', async (req, res) => {
   const user = Object.keys(data).length ? await updateProfile(actor(req).id, data) : await findAccountById(actor(req).id)
   if (!user) throw notFound('Account')
   res.json({
-    user: publicUser(user),
+    user: await sessionUser(user),
   })
 })
 meRouter.post('/avatar', imageUpload.single('image'), async (req, res) => {
@@ -41,7 +41,7 @@ meRouter.post('/avatar', imageUpload.single('image'), async (req, res) => {
     avatarUrl: await storeImage(req.file, 'profile'),
   })
   res.status(201).json({
-    user: publicUser(user),
+    user: await sessionUser(user),
   })
 })
 const addressSchema = z.object({

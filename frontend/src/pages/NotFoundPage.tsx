@@ -3,7 +3,7 @@ import { Container } from '../components/layout/Container.tsx'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function NotFoundPage() {
-  useDocumentTitle('Page not found')
+  useDocumentTitle('Page not found', { noindex: true })
   return (
     <Container className="py-20 text-center">
       <p className="text-8xl font-extrabold text-brand/15">404</p>

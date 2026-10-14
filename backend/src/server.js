@@ -3,6 +3,7 @@ import { env } from './config/env.js'
 import { expireStaleOrders } from './services/orders.js'
 import { purgeExpiredRefreshTokens } from './services/auth.js'
 import { rpc } from './database/db.js'
+import { alertOverdueTickets } from './services/support.js'
 const app = createApp()
 const server = app.listen(env.PORT, () => {
   console.log(`ClickMart API listening on http://localhost:${env.PORT} (${env.NODE_ENV}, payments: ${env.PAYMENT_PROVIDER})`)
@@ -11,6 +12,7 @@ const sweep = setInterval(
   () => {
     expireStaleOrders().catch((error) => console.error('expire sweep failed', error))
     rpc('auto_close_support_tickets', { p_days: 7 }).catch((error) => console.error('ticket cleanup failed', error))
+    alertOverdueTickets().catch((error) => console.error('support alert failed', error))
     purgeExpiredRefreshTokens().catch((error) => console.error('token purge failed', error))
   },
   5 * 60 * 1000,

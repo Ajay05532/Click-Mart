@@ -4,7 +4,7 @@ import { api, errorMessage } from '../lib/api.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 export function ForgotPasswordPage() {
-  useDocumentTitle('Forgot password')
+  useDocumentTitle('Forgot password', { noindex: true })
   const [email, setEmail] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)

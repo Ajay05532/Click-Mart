@@ -81,7 +81,7 @@ function readJson<T>(key: string): T | null {
 }
 
 export function SettingsPage() {
-  useDocumentTitle('Your account')
+  useDocumentTitle('Your account', { noindex: true })
   const { user, logout } = useAuth()
   const wishlist = useWishlist()
   const [params, setParams] = useSearchParams()

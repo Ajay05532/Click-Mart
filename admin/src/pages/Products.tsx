@@ -4,6 +4,8 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../api.ts'
 import { useAuth } from '../auth.tsx'
 import { inr } from '../format.ts'
+import { CsvImport } from '../CsvImport.tsx'
+import { ExportButton } from '../ExportButton.tsx'
 import { useAction, useCategories } from '../hooks.ts'
 import type { Paged, Product } from '../types.ts'
 import { Badge, Button, Card, Drawer, EmptyState, ErrorState, Field, ImageUpload, Input, PageHeader, PageLoader, Pagination, SearchBox, Select, Switch, Table, Td, Textarea, Thumb, errorMessage, useUi } from '../ui.tsx'
@@ -17,6 +19,7 @@ export function ProductsPage() {
   const status = params.get('status') ?? ''
   const page = Number(params.get('page') ?? 1)
   const [editing, setEditing] = useState<Product | 'new' | null>(null)
+  const [importing, setImporting] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   const categories = useCategories()
   const set = (patch: Record<string, string | null>) => {
@@ -46,7 +49,7 @@ export function ProductsPage() {
 
   return (
     <>
-      <PageHeader title="Products" subtitle="Your catalogue, prices and pack sizes." actions={<Button variant="accent" onClick={() => setEditing('new')}>+ Add product</Button>} />
+      <PageHeader title="Products" subtitle="Your catalogue, prices and pack sizes." actions={<><ExportButton report="catalog">Export</ExportButton><Button variant="outline" onClick={() => setImporting(true)}>Import CSV</Button><Button variant="accent" onClick={() => setEditing('new')}>+ Add product</Button></>} />
       <Card>
         <div className="flex flex-wrap items-center gap-3 border-b border-line p-4">
           <SearchBox value={q} onChange={(value) => set({ q: value || null })} placeholder="Search products" />
@@ -99,6 +102,7 @@ export function ProductsPage() {
           </>
         )}
       </Card>
+      {importing && <CsvImport kind="products" onClose={() => setImporting(false)} />}
       {editing && <ProductForm product={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
     </>
   )

@@ -18,6 +18,11 @@ export function createApp() {
   const app = express()
   app.set('trust proxy', 1)
   if (isProd) app.use(requireHttps)
+  // The API is data, not pages. Keep every address on it out of search results.
+  app.use((_req, res, next) => {
+    res.set('X-Robots-Tag', 'noindex, nofollow')
+    next()
+  })
   app.use(
     helmet({
       crossOriginResourcePolicy: {

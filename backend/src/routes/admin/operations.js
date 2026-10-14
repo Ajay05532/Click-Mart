@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { createAccount, findAccountByEmail, findAccountById, peopleByIds, setRole, updateLogin } from '../../services/account.js'
 import { audit } from '../../services/audit.js'
 import { hashPassword, revokeAllRefreshTokens } from '../../services/auth.js'
-import { from, count, maybe, rows, rpc, toHttpError } from '../../database/db.js'
+import { from, count, exec, maybe, rows, rpc, toHttpError } from '../../database/db.js'
 import { badRequest, conflict, notFound } from '../../utils/errors.js'
 import { changeStatus, loadOrder, refundOrder } from '../../services/orders.js'
 import { serializeOrder } from '../../utils/serializers.js'
@@ -11,6 +11,7 @@ import { getSettings, saveSettings } from '../../services/settings.js'
 import { ORDER_SELECT } from '../../database/selects.js'
 import { actor, adminOnly } from '../../middleware/auth.js'
 import { renderInvoice } from '../orders.js'
+import { DEFAULT_STAFF_PERMISSIONS, PERMISSIONS, PERMISSION_KEYS, PERMISSION_PRESETS, cleanPermissions, forgetPermissions } from '../../services/permissions.js'
 export const adminOpsRouter = Router()
 const statusEnum = z.enum(['PLACED', 'CONFIRMED', 'PACKED', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED', 'RETURNED'])
 const like = (value) => value.replace(/[%,()*\\]/g, ' ')
@@ -111,6 +112,25 @@ adminOpsRouter.patch('/orders/:id/status', async (req, res) => {
   res.json({
     order: serializeOrder(await loadOrder(id)),
   })
+})
+adminOpsRouter.post('/orders/bulk-status', async (req, res) => {
+  const data = z
+    .object({
+      ids: z.array(z.string().max(60)).min(1).max(50),
+      status: z.enum(['CONFIRMED', 'PACKED']),
+    })
+    .parse(req.body)
+  const results = []
+  for (const id of data.ids) {
+    try {
+      await changeStatus(id, data.status, {})
+      results.push({ id, ok: true })
+    } catch (error) {
+      results.push({ id, ok: false, message: error?.message ?? 'Could not change this order' })
+    }
+  }
+  await audit(actor(req).id, `order.bulk.${data.status.toLowerCase()}`, 'Order', undefined, { count: data.ids.length, failed: results.filter((item) => !item.ok).length })
+  res.json({ results })
 })
 adminOpsRouter.post('/orders/:id/refund', adminOnly, async (req, res) => {
   const id = String(req.params.id)
@@ -219,6 +239,13 @@ adminOpsRouter.put('/settings', adminOnly, async (req, res) => {
       codEnabled: z.boolean(),
       codMaxOrder: z.number().int().min(0),
       lowStockDefault: z.number().int().min(0),
+      businessName: z.string().trim().max(120),
+      gstin: z
+        .string()
+        .trim()
+        .toUpperCase()
+        .regex(/^([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z])?$/, 'Enter a valid 15-character GSTIN, or leave it blank'),
+      businessState: z.string().trim().max(60),
     })
     .partial()
     .parse(req.body)
@@ -229,8 +256,16 @@ adminOpsRouter.put('/settings', adminOnly, async (req, res) => {
   })
 })
 adminOpsRouter.get('/staff', adminOnly, async (_req, res) => {
+  const people = await rows(from('Person').select('id, name, email, role, isBlocked, createdAt').in('role', ['ADMIN', 'STAFF']).order('createdAt'))
+  const profiles = await rows(from('Staff').select('loginId, permissions'))
+  const byId = new Map(profiles.map((profile) => [profile.loginId, profile.permissions]))
   res.json({
-    items: await rows(from('Person').select('id, name, email, role, isBlocked, createdAt').in('role', ['ADMIN', 'STAFF']).order('createdAt')),
+    items: people.map((person) => ({
+      ...person,
+      permissions: person.role === 'ADMIN' ? PERMISSION_KEYS : cleanPermissions(byId.get(person.id) ?? DEFAULT_STAFF_PERMISSIONS),
+    })),
+    permissions: PERMISSIONS,
+    presets: PERMISSION_PRESETS,
   })
 })
 adminOpsRouter.post('/staff', adminOnly, async (req, res) => {
@@ -240,6 +275,7 @@ adminOpsRouter.post('/staff', adminOnly, async (req, res) => {
       email: z.string().trim().toLowerCase().email(),
       password: z.string().min(8).max(100),
       role: z.enum(['STAFF', 'ADMIN']).default('STAFF'),
+      permissions: z.array(z.enum(PERMISSION_KEYS)).max(PERMISSION_KEYS.length).optional(),
     })
     .parse(req.body)
   if (await findAccountByEmail(data.email)) throw conflict('An account with this email already exists')
@@ -249,8 +285,10 @@ adminOpsRouter.post('/staff', adminOnly, async (req, res) => {
     role: data.role,
     passwordHash: await hashPassword(data.password),
   })
+  if (data.role === 'STAFF' && data.permissions) await exec(from('Staff').update({ permissions: cleanPermissions(data.permissions) }).eq('loginId', user.id))
   await audit(actor(req).id, 'staff.create', 'Login', user.id, {
     role: data.role,
+    permissions: data.permissions,
   })
   res.status(201).json({
     user: {
@@ -266,11 +304,18 @@ adminOpsRouter.patch('/staff/:id', adminOnly, async (req, res) => {
     .object({
       role: z.enum(['CUSTOMER', 'STAFF', 'ADMIN']).optional(),
       isBlocked: z.boolean().optional(),
+      permissions: z.array(z.enum(PERMISSION_KEYS)).max(PERMISSION_KEYS.length).optional(),
     })
     .parse(req.body)
   const id = String(req.params.id)
   if (id === actor(req).id) throw badRequest('You cannot change your own role or access')
   if (data.role) await setRole(id, data.role)
+  if (data.permissions) {
+    const target = await findAccountById(id)
+    if (!target || target.role !== 'STAFF') throw badRequest('Permissions can only be set for staff accounts')
+    await exec(from('Staff').update({ permissions: cleanPermissions(data.permissions) }).eq('loginId', id))
+    forgetPermissions(id)
+  }
   if (data.isBlocked !== undefined)
     await updateLogin(id, {
       isBlocked: data.isBlocked,

@@ -90,3 +90,12 @@ tests/             unit tests
 ## Customer support
 
 Tickets, replies, help articles and saved replies live in the `ops` schema (`supabase/migrations/2026-10-14-customer-support.sql`, also section 16 of `schema.sql`). Customers use `/api/v1/support/*`, staff use `/api/v1/admin/support/*`. New tickets email the customer a confirmation, and a staff reply emails them the answer (printed in the log until `SMTP_URL` is set).
+
+## Admin and operations
+
+- **Permissions.** Administrators see everything. Each staff member has a list of permissions (`orders`, `catalog`, `inventory`, `marketing`, `support`, `customers`, `reports`) stored in `account."Staff"."permissions"`. `middleware/auth.js` `permissionGate` checks them on every `/api/v1/admin/*` URL using the table in `services/permissions.js`; a test fails if a new admin route has no rule. Coupons, refunds, analytics, settings, the team and the activity log stay admin-only.
+- **Reports.** `GET /admin/reports/:id/preview|download?from=&to=` (dates are Indian calendar days). CSV files open in Excel (UTF-8 with BOM, spreadsheet formulas defused). GST is taken out of the GST-inclusive selling price and split into CGST/SGST (same state as `businessState` in Settings) or IGST, with coupons spread over the items; delivery charges are listed separately.
+- **Imports.** `POST /admin/imports/products|stock` with `{ rows, dryRun }` (up to 800 rows). Send `dryRun: true` first to see every problem by line number, then `false` to save. Products are matched by name, pack sizes by size, stock by SKU.
+- **Printing.** `GET /admin/print/packing-slips|pick-list|labels?ids=a,b,c` (up to 60 orders) returns a printable page. `POST /admin/orders/bulk-status` confirms or packs up to 50 orders.
+- **Reply by email.** Set `SUPPORT_INBOUND_EMAIL` and `SUPPORT_INBOUND_SECRET`. Outgoing support emails then carry a Reply-To like `support+1042.<token>@your-inbound-domain`; the token is an HMAC of the ticket number, so only people who received our email can reply into a ticket. Configure a Postmark inbound stream (or any provider that posts the same JSON: `OriginalRecipient`, `TextBody`, `StrippedTextReply`) to call `/api/v1/support/inbound-email?secret=...`. Replies to closed tickets are ignored. Attachments are ignored (the body limit is 1 MB).
+- **Overdue alerts.** Every 5 minutes the server emails `supportEmail` once per ticket that passes its reply target.
