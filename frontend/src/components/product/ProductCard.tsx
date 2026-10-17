@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useCart } from '../../context/CartContext.tsx'
 import { useWishlist } from '../../context/WishlistContext.tsx'
@@ -12,7 +11,7 @@ import { ProductMedia } from './ProductMedia.tsx'
 import { ShareButton } from './ShareButton.tsx'
 
 export function ProductCard({ product, pack: chosen }: { product: Product; pack?: Pack }) {
-  const { addItem } = useCart()
+  const { addItem, updateQty, items } = useCart()
   const wishlist = useWishlist()
   const saved = wishlist.has(product.id)
   const pack = chosen ?? featuredPack(product)
@@ -21,14 +20,9 @@ export function ProductCard({ product, pack: chosen }: { product: Product; pack?
   const title = product.packs.length > 1 ? `${product.name} · ${pack.size}` : product.name
   const href = productPath(product, pack.size)
   const off = discountPercent(pack.price, pack.mrp)
-  const [added, setAdded] = useState(false)
   const lowStock = inStock && stock <= 15
-
-  const add = () => {
-    addItem(pack.variantId, 1, product.name)
-    setAdded(true)
-    window.setTimeout(() => setAdded(false), 1000)
-  }
+  const inCart = items.find((item) => item.variantId === pack.variantId)?.quantity ?? 0
+  const max = Math.min(99, stock)
 
   return (
     <article className="group relative flex h-full flex-col overflow-hidden rounded-[1.25rem] border border-line bg-white shadow-card transition duration-300 hover:-translate-y-1 hover:border-transparent hover:shadow-lift">
@@ -97,25 +91,48 @@ export function ProductCard({ product, pack: chosen }: { product: Product; pack?
         </div>
         {lowStock && <p className="mt-1.5 text-[11px] font-bold text-rose-600">Only {stock} left</p>}
 
-        <div className="mt-auto flex items-end justify-between gap-2 pt-3">
-          <div>
+        <div className="mt-auto flex flex-wrap items-end justify-between gap-2 pt-3">
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold text-muted">{pack.size}</p>
             <p className="flex items-baseline gap-1.5">
               <span className="text-lg leading-none font-extrabold text-ink">{formatPrice(pack.price)}</span>
               {off > 0 && <span className="text-xs text-muted line-through">{formatPrice(pack.mrp)}</span>}
             </p>
           </div>
-          <button
-            type="button"
-            disabled={!inStock}
-            onClick={add}
-            aria-label={`Add ${title} to cart`}
-            className={`grid size-11 shrink-0 place-items-center rounded-full text-white transition duration-200 active:scale-90 disabled:cursor-not-allowed disabled:bg-slate-300 ${
-              added ? 'bg-success' : 'bg-brand hover:bg-accent'
-            }`}
-          >
-            {added ? <span className="motion-pop text-lg leading-none font-bold">✓</span> : <CartIcon className="size-5" />}
-          </button>
+          {inCart > 0 ? (
+            <div className="motion-pop flex h-10 shrink-0 items-center rounded-full bg-brand sm:h-11 text-white shadow-[0_8px_20px_-10px_rgb(18_58_134/0.8)]" role="group" aria-label={`${title} in cart`}>
+              <button
+                type="button"
+                onClick={() => updateQty(pack.variantId, inCart - 1)}
+                aria-label={inCart === 1 ? `Remove ${title} from cart` : `One less ${title}`}
+                className="grid size-10 place-items-center rounded-full text-lg font-bold transition hover:bg-white/15 active:scale-90 sm:size-11"
+              >
+                −
+              </button>
+              <span className="min-w-5 text-center text-sm font-extrabold tabular-nums" aria-live="polite">
+                {inCart}
+              </span>
+              <button
+                type="button"
+                onClick={() => updateQty(pack.variantId, inCart + 1)}
+                disabled={inCart >= max}
+                aria-label={`One more ${title}`}
+                className="grid size-10 place-items-center rounded-full text-lg font-bold transition hover:bg-white/15 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 sm:size-11"
+              >
+                +
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              disabled={!inStock}
+              onClick={() => addItem(pack.variantId, 1, product.name)}
+              aria-label={`Add ${title} to cart`}
+              className="grid size-11 shrink-0 place-items-center rounded-full bg-brand text-white transition duration-200 hover:bg-accent active:scale-90 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              <CartIcon className="size-5" />
+            </button>
+          )}
         </div>
       </div>
     </article>
