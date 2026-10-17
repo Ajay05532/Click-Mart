@@ -4,9 +4,8 @@ import { useAuth } from '../../context/AuthContext.tsx'
 import { useCart } from '../../context/CartContext.tsx'
 import { useDeliveryLocation } from '../../context/LocationContext.tsx'
 import { useWishlist } from '../../context/WishlistContext.tsx'
-import { featuredPack, productPath, useCategories, useProducts, useProductsByIds } from '../../lib/catalog.ts'
+import { featuredPack, productPath, useCategories, useProducts, useProductsByIds, useStoreContact } from '../../lib/catalog.ts'
 import { formatPrice } from '../../lib/money.ts'
-import { storePhone, storePhoneTel } from '../../lib/store.ts'
 import { useUnreadTickets } from '../../lib/support.ts'
 import { ProductMedia } from '../product/ProductMedia.tsx'
 import {
@@ -53,6 +52,7 @@ const accountLinks = [
 ]
 
 export function Header() {
+  const contact = useStoreContact()
   const cart = useCart()
   const wishlist = useWishlist()
   const { user, logout } = useAuth()
@@ -124,9 +124,9 @@ export function Header() {
               </Link>
             </p>
             <div className="flex shrink-0 items-center gap-3">
-              <a href={`tel:${storePhoneTel}`} className="hidden items-center gap-1 sm:inline-flex">
+              <a href={`tel:${contact.phoneTel}`} className="hidden items-center gap-1 sm:inline-flex">
                 <PhoneIcon className="size-3.5" />
-                {storePhone}
+                {contact.phone}
               </a>
               <Link to="/help" className="hidden sm:inline">
                 Help
@@ -738,23 +738,28 @@ function CategoryPane({
   category: Category
   onNavigate: () => void
 }) {
+  const products = useProducts({ category: category.id, sort: 'popular', pageSize: 5 })
+  const items = products.data?.items ?? []
+  const total = products.data?.total ?? 0
+  const subs = category.subcategories.filter((sub) => (sub.productCount ?? 0) > 0)
   return (
-    <div className="min-w-0 flex-1 p-4">
+    <div className="flex min-w-0 flex-1 flex-col p-4">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold">{category.name}</p>
-          <p className="mt-0.5 text-xs text-muted">{category.tagline}</p>
+        <div className="min-w-0">
+          <p className="text-sm font-extrabold">{category.name}</p>
+          {category.tagline && <p className="mt-0.5 text-xs text-muted">{category.tagline}</p>}
         </div>
         <Link
           to={`/shop?category=${category.id}`}
           onClick={onNavigate}
-          className="shrink-0 text-xs font-semibold text-brand"
+          className="shrink-0 text-xs font-bold text-brand"
         >
           Shop all
         </Link>
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        {category.subcategories.map((sub) => {
+      {subs.length > 0 && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {subs.map((sub) => {
           const count = sub.productCount ?? 0
           return (
             <Link
@@ -769,8 +774,33 @@ function CategoryPane({
               </span>
             </Link>
           )
-        })}
-      </div>
+          })}
+        </div>
+      )}
+      <p className="mt-4 px-2 text-[11px] font-extrabold tracking-wider text-muted uppercase">Popular in {category.name}</p>
+      <ul className="mt-1 max-h-72 space-y-0.5 overflow-y-auto">
+        {products.isPending ? (
+          Array.from({ length: 3 }, (_, index) => (
+            <li key={index} className="flex items-center gap-3 px-2 py-1.5">
+              <span className="size-12 shrink-0 animate-pulse rounded-xl bg-canvas" />
+              <span className="h-3 flex-1 animate-pulse rounded bg-canvas" />
+            </li>
+          ))
+        ) : items.length === 0 ? (
+          <li className="px-2 py-6 text-center text-sm text-muted">No products in this category yet.</li>
+        ) : (
+          items.map((product) => <ShelfRow key={product.id} product={product} onNavigate={onNavigate} />)
+        )}
+      </ul>
+      {total > items.length && (
+        <Link
+          to={`/shop?category=${category.id}`}
+          onClick={onNavigate}
+          className="mt-2 block rounded-xl bg-canvas px-3 py-2.5 text-center text-xs font-bold text-brand"
+        >
+          See all {total} in {category.name}
+        </Link>
+      )}
     </div>
   )
 }

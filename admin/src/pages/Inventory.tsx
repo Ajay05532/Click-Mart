@@ -42,7 +42,7 @@ export function InventoryPage() {
             <Table head={['Product', 'Size', 'SKU', 'Stock', 'Alert at', '']}>
               {list.data!.items.map((row) => (
                 <tr key={row.id} className="hover:bg-canvas/60">
-                  <Td><div className="flex items-center gap-3"><Thumb src={row.product.images[0]} name={row.product.name} /><span className="font-bold">{row.product.name}</span>{!row.product.isActive && <Badge>Hidden</Badge>}</div></Td>
+                  <Td><div className="flex items-center gap-3"><Thumb src={row.product.images?.[0]} name={row.product.name} /><span className="font-bold">{row.product.name}</span>{!row.product.isActive && <Badge>Hidden</Badge>}</div></Td>
                   <Td className="font-semibold">{row.size}</Td>
                   <Td className="font-mono text-xs text-muted">{row.sku}</Td>
                   <Td>{row.stock === 0 ? <Badge tone="red">Out of stock</Badge> : row.stock <= row.lowStockAt ? <Badge tone="orange">{row.stock} · low</Badge> : <span className="font-bold">{row.stock}</span>}</Td>

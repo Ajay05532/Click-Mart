@@ -35,12 +35,19 @@ export function serializeProduct(product, offers) {
     description: product.description,
     highlights: product.highlights ?? [],
     nutrition: product.nutrition,
+    brand: product.brand?.name ?? null,
+    ingredients: product.ingredients ?? '',
+    countryOfOrigin: product.countryOfOrigin ?? '',
+    shelfLifeDays: product.shelfLifeDays ?? null,
     packs,
     featuredSize: product.featuredSize ?? packs[0]?.size ?? null,
     inStock: stock > 0,
     stock,
     sold: product.sold,
     bestseller: product.isBestseller,
+    metaTitle: product.metaTitle ?? '',
+    metaDescription: product.metaDescription ?? '',
+    updatedAt: product.updatedAt,
   }
 }
 export const orderCode = (number) => `ORD-${number}`

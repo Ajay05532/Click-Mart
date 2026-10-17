@@ -1,4 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
+import { useStoreContact } from '../../lib/catalog.ts'
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext.tsx'
@@ -6,7 +7,6 @@ import { api, errorMessage } from '../../lib/api.ts'
 import { formatPrice } from '../../lib/money.ts'
 import { formatDay, statusLabel, useMyOrders } from '../../lib/orders.ts'
 import { topics, uploadAttachments, type Ticket, type TopicId } from '../../lib/support.ts'
-import { storeEmail, storePhone, storePhoneTel } from '../../lib/store.ts'
 import { CheckIcon, ClockIcon, MailIcon, PhoneIcon } from '../icons.tsx'
 import { Stepper } from '../ui/Primitives.tsx'
 import { PhotoPicker } from './PhotoPicker.tsx'
@@ -21,6 +21,7 @@ type Done = { code: string; signedIn: boolean; email: string }
  * and can follow replies in My requests; guests send a plain message and hear back by email.
  */
 export function RequestForm({ initialTopic, initialOrder, hideContact = false }: { initialTopic?: TopicId; initialOrder?: string; hideContact?: boolean }) {
+  const contact = useStoreContact()
   const { user } = useAuth()
   const client = useQueryClient()
   const orders = useMyOrders()
@@ -125,7 +126,7 @@ export function RequestForm({ initialTopic, initialOrder, hideContact = false }:
             What do you need help with?
           </h2>
           <p className="mt-2 text-center text-sm text-muted">Pick the closest match. It sends your request to the right person.</p>
-          <ul className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <ul className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {topics.map((item) => {
               const Icon = topicIcons[item.id]
               return (
@@ -145,7 +146,7 @@ export function RequestForm({ initialTopic, initialOrder, hideContact = false }:
           </ul>
         </section>
       ) : (
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_19rem]">
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_19rem]">
           <form onSubmit={(event) => void submit(event)} className="card space-y-5 p-5 sm:p-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -278,19 +279,19 @@ export function RequestForm({ initialTopic, initialOrder, hideContact = false }:
               <h3 className="font-extrabold">Prefer to talk?</h3>
               <ul className="mt-3 space-y-3 text-sm">
                 <li>
-                  <a href={`tel:${storePhoneTel}`} className="flex items-center gap-3 font-semibold hover:text-brand">
+                  <a href={`tel:${contact.phoneTel}`} className="flex items-center gap-3 font-semibold hover:text-brand">
                     <span className="grid size-9 place-items-center rounded-full bg-brand-soft text-brand">
                       <PhoneIcon className="size-4" />
                     </span>
-                    {storePhone}
+                    {contact.phone}
                   </a>
                 </li>
                 <li>
-                  <a href={`mailto:${storeEmail}`} className="flex min-w-0 items-center gap-3 font-semibold hover:text-brand">
+                  <a href={`mailto:${contact.email}`} className="flex min-w-0 items-center gap-3 font-semibold hover:text-brand">
                     <span className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft text-brand">
                       <MailIcon className="size-4" />
                     </span>
-                    <span className="truncate">{storeEmail}</span>
+                    <span className="truncate">{contact.email}</span>
                   </a>
                 </li>
               </ul>

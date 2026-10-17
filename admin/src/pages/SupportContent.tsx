@@ -116,7 +116,7 @@ function SavedReplies() {
       {query.isLoading ? <PageLoader /> : query.error ? <Card><ErrorState error={query.error} retry={() => void query.refetch()} /></Card> : query.data!.length === 0 ? (
         <Card><EmptyState title="No saved replies" text="Save the answers you type again and again, like refund timelines or how to send a photo." action={<Button variant="accent" onClick={() => setEditing('new')}>Write the first one</Button>} /></Card>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {query.data!.map((reply) => (
             <Card key={reply.id} className="flex flex-col p-5">
               <p className="font-extrabold">{reply.title}</p>

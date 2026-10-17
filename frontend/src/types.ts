@@ -27,13 +27,20 @@ export type Pack = {
   offer?: { name: string; badge: string | null } | null
 }
 
-export type Subcategory = {
+/** Optional search listing text set in the admin. Empty strings mean "write it automatically". */
+export type SeoText = {
+  metaTitle?: string
+  metaDescription?: string
+}
+
+export type Subcategory = SeoText & {
   id: string
   name: string
+  description?: string
   productCount?: number
 }
 
-export type Product = {
+export type Product = SeoText & {
   id: string
   slug: string
   name: string
@@ -55,14 +62,20 @@ export type Product = {
   sold: number
   nutrition: { label: string; value: string }[]
   bestseller?: boolean
+  updatedAt?: string
+  brand?: string | null
+  ingredients?: string
+  countryOfOrigin?: string
+  shelfLifeDays?: number | null
 }
 
-export type Category = {
+export type Category = SeoText & {
   id: CategoryId
   name: string
   image: string | null
   art: ArtTone
   tagline: string
+  description?: string
   productCount?: number
   subcategories: Subcategory[]
 }
@@ -77,12 +90,6 @@ export type Review = {
   date: string
 }
 
-export type Testimonial = {
-  name: string
-  city: string
-  rating: number
-  comment: string
-}
 
 export type Coupon = {
   code: string

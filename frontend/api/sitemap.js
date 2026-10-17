@@ -15,7 +15,8 @@ export function buildSitemap(site, { categories = [], products = [] }) {
   for (const product of products) {
     const photos = (product.images?.length ? product.images : product.image ? [product.image] : []).slice(0, 5)
     const images = photos.map((src) => `\n    <image:image><image:loc>${esc(absolute(site, src))}</image:loc><image:title>${esc(product.name)}</image:title></image:image>`).join('')
-    out.push(entry(`/product/${encodeURIComponent(product.slug)}`, `\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>${images}`))
+    const lastmod = product.updatedAt ? `\n    <lastmod>${esc(String(product.updatedAt).slice(0, 10))}</lastmod>` : ''
+    out.push(entry(`/product/${encodeURIComponent(product.slug)}`, `${lastmod}\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>${images}`))
   }
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n${out.join('\n')}\n</urlset>\n`
 }

@@ -105,7 +105,7 @@ export function SupportTicketPage() {
         </div>
       </div>
 
-      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <Card className="overflow-hidden">
           <ol className="max-h-[36rem] min-h-56 space-y-4 overflow-y-auto bg-canvas/60 p-5">
             {messages.map((message) => (

@@ -88,7 +88,7 @@ export function ReportsPage() {
           <EmptyState title="No reports for your account" text="Ask an administrator to give you access to reports." />
         </Card>
       ) : (
-        <div className="grid items-start gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
           <nav aria-label="Reports" className="space-y-2">
             {reports.data!.map((item) => (
               <button key={item.id} type="button" aria-current={item.id === selectedId} onClick={() => setParams({ report: item.id }, { replace: true })} className={`block w-full rounded-2xl border p-4 text-left transition ${item.id === selectedId ? 'border-brand bg-white shadow-card ring-1 ring-brand' : 'border-line/80 bg-white hover:border-brand'}`}>

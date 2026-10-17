@@ -6,8 +6,7 @@ import { ProductCard } from '../components/product/ProductCard.tsx'
 import { ProductMedia } from '../components/product/ProductMedia.tsx'
 import { SectionHeading } from '../components/ui/Primitives.tsx'
 import { Stars } from '../components/ui/Stars.tsx'
-import { featuredPack, productPath, useActiveCoupons, useBanners, useCategories, useProducts, useStoreSettings } from '../lib/catalog.ts'
-import { testimonials } from '../data/reviews.ts'
+import { featuredPack, productPath, useActiveCoupons, useBanners, useCategories, useFeaturedReviews, useProducts, useStoreSettings } from '../lib/catalog.ts'
 import { discountPercent, formatPrice } from '../lib/money.ts'
 import { organizationJsonLd, websiteJsonLd } from '../lib/jsonld.ts'
 import { useSeo } from '../lib/seo.ts'
@@ -87,6 +86,7 @@ export function HomePage() {
   const best = useProducts({ category: lone?.id, bestseller: true, pageSize: 8 })
   const promo = useBanners('PROMO').data?.[0]
   const coupons = useActiveCoupons().data ?? []
+  const reviews = useFeaturedReviews().data ?? []
   const tabs = [
     { id: 'all' as const, label: 'All' },
     ...(sale.data && sale.data.total > 0 ? [{ id: 'sale' as const, label: 'On sale' }] : []),
@@ -115,7 +115,7 @@ export function HomePage() {
   return (
     <div className="bg-white">
       <section className="relative overflow-hidden bg-[#f6f1e8]">
-        <Container className="relative grid items-center gap-8 py-12 sm:py-16 lg:grid-cols-[0.92fr_1.08fr] lg:gap-6 lg:py-20">
+        <Container className="relative grid grid-cols-1 items-center gap-8 py-12 sm:py-16 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] lg:gap-6 lg:py-20">
           <div className="motion-rise relative z-10 max-w-xl">
             <p className="eyebrow">Handpicked dry fruits</p>
             <h1 className="mt-4 text-[3.4rem] leading-[0.92] font-extrabold tracking-tight text-brand-dark sm:text-7xl lg:text-[5.2rem]">
@@ -284,7 +284,7 @@ export function HomePage() {
       <section id="sale-banner" className="scroll-mt-24 py-14">
         <Container>
           <div className="overflow-hidden rounded-[1.75rem] bg-brand-dark text-white shadow-lift">
-            <div className="grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
               <div className="order-2 flex flex-col p-6 sm:p-10 lg:order-1 lg:p-12">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-xs font-extrabold tracking-[0.18em] text-orange-300 uppercase">On sale</p>
@@ -340,7 +340,7 @@ export function HomePage() {
       <section className="bg-cream py-14">
         <Container>
           <SectionHeading eyebrow="How it works" title="From the pouch to your door" />
-          <ol className="mt-8 grid gap-5 md:grid-cols-3">
+          <ol className="mt-8 grid grid-cols-1 gap-5 md:grid-cols-3">
             {steps.map((item) => (
               <li key={item.step} className="relative overflow-hidden rounded-3xl border border-line bg-white p-7 shadow-card">
                 <span className="absolute -top-3 right-3 text-8xl font-extrabold text-brand/[0.06]">{item.step}</span>
@@ -355,32 +355,41 @@ export function HomePage() {
         </Container>
       </section>
 
-      {/* Testimonials */}
-      <section className="py-14">
-        <Container>
-          <SectionHeading eyebrow="Loved across India" title="What our customers say" />
-          <div className="stagger mt-8 grid gap-5 md:grid-cols-3">
-            {testimonials.map((item) => (
-              <figure key={item.name} className="flex flex-col rounded-3xl border border-line bg-white p-6 shadow-card">
-                <Stars value={item.rating} />
-                <blockquote className="mt-4 flex-1 text-[15px] leading-7 text-ink-soft">“{item.comment}”</blockquote>
-                <figcaption className="mt-5 flex items-center gap-3 border-t border-line pt-4">
-                  <span className="grid size-10 place-items-center rounded-full bg-gradient-to-br from-brand to-[#2f6bd6] text-xs font-extrabold text-white">
-                    {item.name
-                      .split(' ')
-                      .map((part) => part[0])
-                      .join('')}
-                  </span>
-                  <span>
-                    <span className="block text-sm font-extrabold">{item.name}</span>
-                    <span className="block text-xs text-muted">{item.city} · Verified buyer</span>
-                  </span>
-                </figcaption>
-              </figure>
-            ))}
-          </div>
-        </Container>
-      </section>
+      {reviews.length > 0 && (
+        <section className="py-14">
+          <Container>
+            <SectionHeading eyebrow="From our customers" title="What shoppers say" />
+            <div className="stagger mt-8 grid grid-cols-1 gap-5 md:grid-cols-3">
+              {reviews.slice(0, 3).map((item) => (
+                <figure key={item.id} className="flex flex-col rounded-3xl border border-line bg-white p-6 shadow-card">
+                  <Stars value={item.rating} />
+                  <blockquote className="mt-4 flex-1 text-[15px] leading-7 text-ink-soft">“{item.comment}”</blockquote>
+                  <figcaption className="mt-5 flex items-center gap-3 border-t border-line pt-4">
+                    <span className="grid size-10 shrink-0 place-items-center rounded-full bg-brand text-xs font-extrabold text-white">
+                      {item.name.split(/\s+/).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-extrabold">{item.name}</span>
+                      <span className="block truncate text-xs text-muted">
+                        {item.city}
+                        {item.verified ? ' · Verified buyer' : ''}
+                        {item.product ? (
+                          <>
+                            {' · '}
+                            <Link to={`/product/${item.product.slug}`} className="font-semibold text-brand hover:underline">
+                              {item.product.name}
+                            </Link>
+                          </>
+                        ) : null}
+                      </span>
+                    </span>
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
+          </Container>
+        </section>
+      )}
     </div>
   )
 }

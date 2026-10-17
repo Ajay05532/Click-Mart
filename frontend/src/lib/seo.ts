@@ -21,6 +21,33 @@ export type Seo = {
   jsonLd?: object | object[] | null
 }
 
+/**
+ * Search text for a product when the admin left it empty: price, pack sizes and the short
+ * description. Keep in step with api/_meta.js so crawlers and the browser agree.
+ */
+export function productSearchText(product: { name: string; blurb?: string; description?: string; packs: { size: string; price: number }[]; metaTitle?: string; metaDescription?: string }) {
+  const from = Math.min(...product.packs.map((pack) => pack.price))
+  const sizes = [...new Set(product.packs.map((pack) => pack.size))]
+  const about = (product.blurb || product.description || '').trim()
+  return {
+    title: product.metaTitle?.trim() || `${product.name} — Buy Online`,
+    description:
+      product.metaDescription?.trim() ||
+      [Number.isFinite(from) ? `From ₹${from}.` : '', sizes.length ? `Packs: ${sizes.join(', ')}.` : '', about || `Buy ${product.name} online from ClickMart.`, 'Packed fresh in Patna, delivered across India.']
+        .filter(Boolean)
+        .join(' '),
+  }
+}
+
+/** Search text for a category or sub-category page. The admin's own text wins when it is set. */
+export function categorySearchText(category: { name: string; tagline?: string; description?: string; metaTitle?: string; metaDescription?: string }) {
+  const intro = (category.description || category.tagline || '').trim()
+  return {
+    title: category.metaTitle?.trim() || `Buy ${category.name} Online`,
+    description: category.metaDescription?.trim() || `${intro ? `${intro} ` : ''}Buy ${category.name} online from ClickMart. Packed fresh to order and delivered across India.`,
+  }
+}
+
 const fullTitle = (title?: string) => (!title ? `${SITE_NAME} · Premium dry fruits, nuts and seeds` : /clickmart/i.test(title) ? title : `${title} · ${SITE_NAME}`)
 const clip = (text: string, max = 160) => {
   const flat = text.replace(/\s+/g, ' ').trim()

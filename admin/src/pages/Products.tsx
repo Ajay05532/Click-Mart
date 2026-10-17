@@ -6,6 +6,9 @@ import { useAuth } from '../auth.tsx'
 import { inr } from '../format.ts'
 import { CsvImport } from '../CsvImport.tsx'
 import { ExportButton } from '../ExportButton.tsx'
+import { ProductLinks } from '../ProductLinks.tsx'
+import { SeoFields } from '../SeoFields.tsx'
+import { autoProductText } from '../seoText.ts'
 import { useAction, useCategories } from '../hooks.ts'
 import type { Paged, Product } from '../types.ts'
 import { Badge, Button, Card, Drawer, EmptyState, ErrorState, Field, ImageUpload, Input, PageHeader, PageLoader, Pagination, SearchBox, Select, Switch, Table, Td, Textarea, Thumb, errorMessage, useUi } from '../ui.tsx'
@@ -20,6 +23,7 @@ export function ProductsPage() {
   const page = Number(params.get('page') ?? 1)
   const [editing, setEditing] = useState<Product | 'new' | null>(null)
   const [importing, setImporting] = useState(false)
+  const [links, setLinks] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   const categories = useCategories()
   const set = (patch: Record<string, string | null>) => {
@@ -49,7 +53,7 @@ export function ProductsPage() {
 
   return (
     <>
-      <PageHeader title="Products" subtitle="Your catalogue, prices and pack sizes." actions={<><ExportButton report="catalog">Export</ExportButton><Button variant="outline" onClick={() => setImporting(true)}>Import CSV</Button><Button variant="accent" onClick={() => setEditing('new')}>+ Add product</Button></>} />
+      <PageHeader title="Products" subtitle="Your catalogue, prices and pack sizes." actions={<><ExportButton report="catalog">Export</ExportButton><Button variant="outline" onClick={() => setImporting(true)}>Import CSV</Button><Button variant="outline" onClick={() => setLinks(true)}>Product links</Button><Button variant="accent" onClick={() => setEditing('new')}>+ Add product</Button></>} />
       <Card>
         <div className="flex flex-wrap items-center gap-3 border-b border-line p-4">
           <SearchBox value={q} onChange={(value) => set({ q: value || null })} placeholder="Search products" />
@@ -80,14 +84,14 @@ export function ProductsPage() {
                   <Td><input type="checkbox" aria-label={`Select ${product.name}`} checked={selected.includes(product.id)} onChange={() => setSelected((current) => (current.includes(product.id) ? current.filter((id) => id !== product.id) : [...current, product.id]))} /></Td>
                   <Td>
                     <button type="button" onClick={() => setEditing(product)} className="flex items-center gap-3 text-left">
-                      <Thumb src={product.images[0]} name={product.name} size="size-11" />
+                      <Thumb src={product.images?.[0]} name={product.name} size="size-11" />
                       <span><span className="block font-bold hover:text-brand">{product.name}</span><span className="text-xs text-muted">{product.sold} sold</span></span>
                     </button>
                   </Td>
                   <Td className="text-muted capitalize">{product.category?.name ?? product.categoryId}</Td>
                   <Td>
-                    <p className="text-xs text-muted">{product.variants.length} sizes</p>
-                    <p className="font-semibold">{inr(Math.min(...product.variants.map((v) => v.price)))}{product.variants.length > 1 && <span className="text-muted"> – {inr(Math.max(...product.variants.map((v) => v.price)))}</span>}</p>
+                    <p className="text-xs text-muted">{product.variants?.length ?? 0} sizes</p>
+                    <p className="font-semibold">{packPrice(product.variants)}</p>
                   </Td>
                   <Td>{product.stock === 0 ? <Badge tone="red">Out of stock</Badge> : product.lowStock ? <Badge tone="orange">{product.stock} · low</Badge> : <span className="font-semibold">{product.stock}</span>}</Td>
                   <Td><div className="flex flex-wrap gap-1">{product.isActive ? <Badge tone="green">Active</Badge> : <Badge>Hidden</Badge>}{product.isBestseller && <Badge tone="blue">Bestseller</Badge>}</div></Td>
@@ -102,10 +106,19 @@ export function ProductsPage() {
           </>
         )}
       </Card>
+      {links && <ProductLinks onClose={() => setLinks(false)} />}
       {importing && <CsvImport kind="products" onClose={() => setImporting(false)} />}
       {editing && <ProductForm product={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
     </>
   )
+}
+
+function packPrice(variants: Product['variants'] | undefined) {
+  const prices = (variants ?? []).map((variant) => variant.price).filter((price) => Number.isFinite(price))
+  if (prices.length === 0) return '—'
+  const low = Math.min(...prices)
+  const high = Math.max(...prices)
+  return high === low ? inr(low) : <>{inr(low)}<span className="text-muted"> – {inr(high)}</span></>
 }
 
 type VariantRow = { id?: string; size: string; price: string; mrp: string; stock: string; lowStockAt: string; isActive: boolean; original?: { price: number; mrp: number; isActive: boolean; lowStockAt: number } }
@@ -134,12 +147,14 @@ function ProductForm({ product, onClose }: { product: Product | null; onClose: (
     isActive: product?.isActive ?? true,
     isBestseller: product?.isBestseller ?? false,
     featuredSize: product?.featuredSize ?? '',
+    metaTitle: product?.metaTitle ?? '',
+    metaDescription: product?.metaDescription ?? '',
   })
   const [images, setImages] = useState<string[]>(product?.images ?? [])
   const [nutrition, setNutrition] = useState(product?.nutrition ?? [])
   const [rows, setRows] = useState<VariantRow[]>(
     product
-      ? product.variants.map((v) => ({ id: v.id, size: v.size, price: String(v.price), mrp: String(v.mrp), stock: String(v.stock), lowStockAt: String(v.lowStockAt), isActive: v.isActive, original: { price: v.price, mrp: v.mrp, isActive: v.isActive, lowStockAt: v.lowStockAt } }))
+      ? (product.variants ?? []).map((v) => ({ id: v.id, size: v.size, price: String(v.price), mrp: String(v.mrp), stock: String(v.stock), lowStockAt: String(v.lowStockAt), isActive: v.isActive, original: { price: v.price, mrp: v.mrp, isActive: v.isActive, lowStockAt: v.lowStockAt } }))
       : [{ size: '250g', price: '', mrp: '', stock: '0', lowStockAt: '10', isActive: true }],
   )
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -189,6 +204,9 @@ function ProductForm({ product, onClose }: { product: Product | null; onClose: (
         isActive: form.isActive,
         isBestseller: form.isBestseller,
         featuredSize: form.featuredSize || rows[0]?.size || null,
+        // Only sent when changed, so products still save before the SEO migration is pasted.
+        ...(form.metaTitle.trim() !== (product?.metaTitle ?? '') ? { metaTitle: form.metaTitle.trim() } : {}),
+        ...(form.metaDescription.trim() !== (product?.metaDescription ?? '') ? { metaDescription: form.metaDescription.trim() } : {}),
       }
       if (!product) {
         await api('/admin/products', { body: { ...base, variants: rows.map((row) => ({ size: row.size.trim(), price: Number(row.price), mrp: Number(row.mrp), stock: Number(row.stock), lowStockAt: Number(row.lowStockAt) || 10, isActive: row.isActive })) } })
@@ -315,6 +333,21 @@ function ProductForm({ product, onClose }: { product: Product | null; onClose: (
                 <Button variant="ghost" aria-label="Remove row" onClick={() => setNutrition((current) => current.filter((_, i) => i !== index))}>✕</Button>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section>
+          <h3 className="font-extrabold">Search engine listing</h3>
+          <p className="text-xs text-muted">How this product appears on Google. Leave both empty to use the automatic text.</p>
+          <div className="mt-3">
+            <SeoFields
+              title={form.metaTitle}
+              description={form.metaDescription}
+              onTitle={(value) => set('metaTitle', value)}
+              onDescription={(value) => set('metaDescription', value)}
+              auto={autoProductText({ name: form.name, blurb: form.blurb, description: form.description, sizes: rows.map((row) => row.size.trim()), prices: rows.map((row) => Number(row.price)).filter((price) => price > 0) })}
+              path={`/product/${form.slug.trim() || product?.slug || form.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'new-product'}`}
+            />
           </div>
         </section>
 

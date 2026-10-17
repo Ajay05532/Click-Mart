@@ -144,7 +144,7 @@ export const failPayment = (orderId, note = 'Payment failed') =>
 const defaultNote = {
   PLACED: 'Order placed',
   CONFIRMED: 'Order confirmed',
-  PACKED: 'Packed fresh at our Bengaluru kitchen',
+  PACKED: 'Packed fresh at our Patna kitchen',
   SHIPPED: 'Handed to the courier',
   OUT_FOR_DELIVERY: 'Out for delivery today',
   DELIVERED: 'Delivered. Enjoy!',

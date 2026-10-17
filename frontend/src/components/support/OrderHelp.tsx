@@ -60,7 +60,7 @@ export function OrderHelp({ order }: { order: ApiOrder }) {
   }
 
   return (
-    <div className="mt-5 grid items-start gap-5 print:hidden lg:grid-cols-2">
+    <div className="mt-5 grid grid-cols-1 items-start gap-5 print:hidden lg:grid-cols-2">
       {(canCancel || locked) && (
         <section className="card p-5" aria-labelledby="order-cancel-title">
           <h2 id="order-cancel-title" className="text-xs font-extrabold tracking-[0.14em] text-muted uppercase">Cancel order</h2>

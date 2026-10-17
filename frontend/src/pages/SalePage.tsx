@@ -108,7 +108,7 @@ export function SalePage() {
         {/* Coupons */}
         <section aria-labelledby="coupons">
           <h2 id="coupons" className="text-xl font-extrabold">Coupons you can use today</h2>
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
             {coupons.map((coupon) => (
               <div key={coupon.code} className="card relative flex items-center gap-4 overflow-hidden p-5">
                 <span className="absolute top-1/2 -left-2.5 size-5 -translate-y-1/2 rounded-full bg-canvas ring-1 ring-line" />

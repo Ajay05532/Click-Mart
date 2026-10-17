@@ -25,7 +25,18 @@ const listQuery = z.object({
   sort: z.enum(['popular', 'price-asc', 'price-desc', 'rating', 'discount', 'newest']).default('popular'),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(60).default(12),
+  /** Shuffle seed for products without reviews. Same seed, same order, so pages never repeat or skip items. */
+  seed: z.string().trim().max(40).optional(),
 })
+/** Stable pseudo-random number for a product under a seed (FNV-1a). */
+function shuffleKey(seed, id) {
+  let hash = 2166136261
+  for (const char of `${seed}:${id}`) {
+    hash ^= char.charCodeAt(0)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
 const arr = (value) => (value === undefined ? [] : Array.isArray(value) ? value : [value])
 const like = (value) => value.replace(/[%,()*\\]/g, ' ')
 catalogRouter.get('/products', async (req, res) => {
@@ -71,18 +82,24 @@ catalogRouter.get('/products', async (req, res) => {
     const pack = feat(item)
     return pack ? 1 - pack.price / pack.mrp : 0
   }
+  // Reviewed products lead, best rated first. The rest are shuffled per shopper (or per day without a seed).
+  const seed = query.seed || new Date().toISOString().slice(0, 10)
+  const rated = (item) => item.reviewCount > 0 && item.rating > 0
+  const byReviews = (a, b) => {
+    if (rated(a) !== rated(b)) return rated(a) ? -1 : 1
+    if (rated(a)) return b.rating - a.rating || b.reviewCount - a.reviewCount || b.sold - a.sold
+    return shuffleKey(seed, a.id) - shuffleKey(seed, b.id)
+  }
   items.sort((a, b) => {
     switch (query.sort) {
       case 'price-asc':
         return feat(a).price - feat(b).price
       case 'price-desc':
         return feat(b).price - feat(a).price
-      case 'rating':
-        return b.rating - a.rating
       case 'discount':
         return off(b) - off(a)
       default:
-        return b.sold - a.sold
+        return byReviews(a, b)
     }
   })
   const total = items.length
@@ -116,6 +133,19 @@ catalogRouter.get('/products/:slug', async (req, res) => {
     product: serializeProduct(product, offers),
     related: related.map((item) => serializeProduct(item, offers)),
   })
+})
+/** Recent approved 4 and 5 star reviews with a comment, for the home page. Empty until customers write some. */
+catalogRouter.get('/reviews/featured', async (_req, res) => {
+  const items = await rows(
+    from('Review')
+      .select('id, name, city, rating, comment, verified, createdAt, product:Product(name, slug)')
+      .eq('status', 'APPROVED')
+      .gte('rating', 4)
+      .neq('comment', '')
+      .order('createdAt', { ascending: false })
+      .limit(6),
+  )
+  res.json({ items })
 })
 catalogRouter.get('/products/:slug/reviews', async (req, res) => {
   const product = await maybe(from('Product').select('id').eq('slug', String(req.params.slug)).maybeSingle())
@@ -211,6 +241,9 @@ catalogRouter.get('/categories', async (_req, res) => {
         id: category.id,
         name: category.name,
         tagline: category.tagline,
+        description: category.description ?? '',
+        metaTitle: category.metaTitle ?? '',
+        metaDescription: category.metaDescription ?? '',
         image: category.image,
         art: category.art,
         productCount: countOf(category.id),
@@ -219,6 +252,9 @@ catalogRouter.get('/categories', async (_req, res) => {
           .map((child) => ({
             id: child.id,
             name: child.name,
+            description: child.description ?? '',
+            metaTitle: child.metaTitle ?? '',
+            metaDescription: child.metaDescription ?? '',
             productCount: countOf(child.id),
           })),
       })),

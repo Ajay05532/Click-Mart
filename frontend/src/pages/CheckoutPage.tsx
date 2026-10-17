@@ -345,7 +345,7 @@ export function CheckoutPage() {
           <Stepper steps={['Cart', 'Details', 'Payment']} current={step + 1} />
         </div>
 
-        <div className="mt-8 grid items-start gap-6 lg:grid-cols-[1fr_380px]">
+        <div className="mt-8 grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
           <div>
             {step === 0 ? (
               <form id="checkout-details" onSubmit={continueToPayment} noValidate className="card motion-page p-5 sm:p-7">

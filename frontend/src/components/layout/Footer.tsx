@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { useCategories } from '../../lib/catalog.ts'
-import { storeAddress, storeEmail, storePhone, storePhoneTel } from '../../lib/store.ts'
+import { useCategories, useStoreContact } from '../../lib/catalog.ts'
 import { MailIcon, PhoneIcon, PinIcon } from '../icons.tsx'
 import { Container } from './Container.tsx'
 import { Logo } from './Logo.tsx'
@@ -44,6 +43,8 @@ const help = [
 const payments = ['UPI', 'Cards', 'Netbanking', 'COD']
 
 export function Footer() {
+  const adminUrl = (import.meta.env.VITE_ADMIN_URL as string | undefined) || (import.meta.env.DEV ? 'http://localhost:5175' : '')
+  const contact = useStoreContact()
   const categories = useCategories().data ?? []
 
   return (
@@ -55,20 +56,20 @@ export function Footer() {
           <p className="mt-4 max-w-xs text-sm leading-6 text-white/70">Premium dry fruits, nuts and seeds, packed in Patna and sent across India.</p>
           <ul className="mt-6 space-y-3 text-sm">
             <li>
-              <a href={`tel:${storePhoneTel}`} className="inline-flex items-center gap-2.5 text-white/80 transition hover:text-white">
+              <a href={`tel:${contact.phoneTel}`} className="inline-flex items-center gap-2.5 text-white/80 transition hover:text-white">
                 <span className="grid size-8 place-items-center rounded-full bg-white/10 text-accent"><PhoneIcon className="size-3.5" /></span>
-                {storePhone}
+                {contact.phone}
               </a>
             </li>
             <li>
-              <a href={`mailto:${storeEmail}`} className="inline-flex items-center gap-2.5 text-white/80 transition hover:text-white">
+              <a href={`mailto:${contact.email}`} className="inline-flex items-center gap-2.5 text-white/80 transition hover:text-white">
                 <span className="grid size-8 place-items-center rounded-full bg-white/10 text-accent"><MailIcon className="size-3.5" /></span>
-                {storeEmail}
+                {contact.email}
               </a>
             </li>
             <li className="flex items-start gap-2.5 text-white/70">
               <span className="grid size-8 shrink-0 place-items-center rounded-full bg-white/10 text-accent"><PinIcon className="size-3.5" /></span>
-              <span className="block min-w-0 flex-1 pt-1 leading-5">{storeAddress}</span>
+              <span className="block min-w-0 flex-1 pt-1 leading-5">{contact.address}</span>
             </li>
           </ul>
         </div>
@@ -117,9 +118,11 @@ export function Footer() {
           <p className="flex flex-wrap gap-x-4 gap-y-1">
             <Link to="/privacy" className="hover:text-white">Privacy</Link>
             <Link to="/terms" className="hover:text-white">Terms</Link>
-            <a href={import.meta.env.VITE_ADMIN_URL ?? 'http://localhost:5175'} className="hover:text-white">
+            {adminUrl && (
+              <a href={adminUrl} className="hover:text-white">
               Seller dashboard
             </a>
+            )}
           </p>
         </Container>
       </div>

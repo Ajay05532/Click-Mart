@@ -17,7 +17,7 @@ export function BannersPage() {
     <>
       <PageHeader title="Banners" subtitle="Promotions shown on the storefront home page." actions={<Button variant="accent" onClick={() => setEditing('new')}>+ New banner</Button>} />
       {query.isLoading ? <PageLoader /> : query.error ? <Card><ErrorState error={query.error} /></Card> : query.data!.length === 0 ? <Card><EmptyState title="No banners yet" action={<Button variant="accent" onClick={() => setEditing('new')}>+ New banner</Button>} /></Card> : (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {query.data!.map((b) => (
             <Card key={b.id} className="overflow-hidden">
               <div className="relative aspect-[16/6] bg-ink">

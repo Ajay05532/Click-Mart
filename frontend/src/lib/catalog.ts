@@ -1,4 +1,5 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { storeAddress, storeEmail, storePhone, storePhoneTel } from './store.ts'
 import type { Category, Pack, Product } from '../types.ts'
 import { api } from './api.ts'
 
@@ -19,11 +20,25 @@ export const packCards = (products: Product[]): { product: Product; pack: Pack }
 export type ProductList = { items: Product[]; total: number; page: number; pages: number }
 export type ProductParams = Record<string, string | number | boolean | string[] | undefined>
 
+/** One shuffle per browser tab: products without reviews keep their order while the shopper browses. */
+function browseSeed() {
+  try {
+    let seed = sessionStorage.getItem('clickmart-seed')
+    if (!seed) {
+      seed = Math.random().toString(36).slice(2, 10)
+      sessionStorage.setItem('clickmart-seed', seed)
+    }
+    return seed
+  } catch {
+    return undefined
+  }
+}
+
 /** Filtered, sorted, paginated products. The server does the filtering. */
 export const useProducts = (params: ProductParams = {}, enabled = true) =>
   useQuery({
     queryKey: ['products', params],
-    queryFn: () => api<ProductList>('/products', { query: params }),
+    queryFn: () => api<ProductList>('/products', { query: { ...params, seed: browseSeed() } }),
     placeholderData: keepPreviousData,
     staleTime: 15_000,
     refetchOnWindowFocus: true,
@@ -58,6 +73,11 @@ export const useCategories = () =>
   })
 
 export type ProductReview = { id: string; name: string; city: string; rating: number; comment: string; images?: string[]; verified: boolean; createdAt: string }
+export type FeaturedReview = { id: string; name: string; city: string; rating: number; comment: string; verified: boolean; createdAt: string; product: { name: string; slug: string } | null }
+/** Recent approved 4-5 star reviews across the shop. Empty until customers write some. */
+export const useFeaturedReviews = () =>
+  useQuery({ queryKey: ['reviews', 'featured'], queryFn: () => api<{ items: FeaturedReview[] }>('/reviews/featured').then((result) => result.items), staleTime: 5 * 60_000 })
+
 export const useProductReviews = (slug: string) =>
   useQuery({ queryKey: ['reviews', slug], queryFn: () => api<{ items: ProductReview[] }>(`/products/${slug}/reviews`).then((result) => result.items) })
 
@@ -82,6 +102,7 @@ export type StoreSettings = {
   storeName: string
   supportEmail: string
   supportPhone: string
+  address: string
   freeShippingThreshold: number
   shippingFee: number
   codEnabled: boolean
@@ -95,6 +116,7 @@ const defaults: StoreSettings = {
   storeName: 'ClickMart',
   supportEmail: '',
   supportPhone: '',
+  address: '',
   freeShippingThreshold: 499,
   shippingFee: 49,
   codEnabled: true,
@@ -107,4 +129,16 @@ const defaults: StoreSettings = {
 export function useStoreSettings(): StoreSettings {
   const query = useQuery({ queryKey: ['settings'], queryFn: () => api<StoreSettings>('/settings/public'), staleTime: 5 * 60_000 })
   return { ...defaults, ...query.data }
+}
+
+/** Phone, email and address from Settings in the admin, with the built-in Patna details while they load. */
+export function useStoreContact() {
+  const settings = useStoreSettings()
+  const phone = settings.supportPhone.trim() || storePhone
+  return {
+    phone,
+    phoneTel: phone.replace(/[^\d+]/g, '') || storePhoneTel,
+    email: settings.supportEmail.trim() || storeEmail,
+    address: settings.address.trim() || storeAddress,
+  }
 }

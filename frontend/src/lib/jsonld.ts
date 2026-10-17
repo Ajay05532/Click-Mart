@@ -62,6 +62,23 @@ export const faqJsonLd = (faqs: { question: string; answer: string }[]) => ({
   mainEntity: faqs.map((faq) => ({ '@type': 'Question', name: faq.question, acceptedAnswer: { '@type': 'Answer', text: plain(faq.answer) } })),
 })
 
+/** A category page: what it is about and the products listed on it, in order. */
+export function categoryJsonLd(input: { name: string; path: string; description: string; products: Pick<Product, 'name' | 'slug'>[] }) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'CollectionPage',
+    name: input.name,
+    url: absoluteUrl(input.path),
+    description: plain(input.description, 500),
+    isPartOf: { '@id': `${siteUrl()}/#website` },
+    mainEntity: {
+      '@type': 'ItemList',
+      numberOfItems: input.products.length,
+      itemListElement: input.products.map((product, index) => ({ '@type': 'ListItem', position: index + 1, name: product.name, url: absoluteUrl(`/product/${product.slug}`) })),
+    },
+  }
+}
+
 /** Price, stock and rating for search results. One offer per pack size. */
 export function productJsonLd(product: Product) {
   const images = (product.images?.length ? product.images : product.image ? [product.image] : []).map(absoluteUrl)
@@ -69,6 +86,7 @@ export function productJsonLd(product: Product) {
     '@context': 'https://schema.org',
     '@type': 'Product',
     name: product.name,
+    url: absoluteUrl(`/product/${product.slug}`),
     description: plain(product.description || product.blurb || product.name, 5000),
     sku: product.packs[0]?.variantId,
     ...(images.length ? { image: images } : {}),

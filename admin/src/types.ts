@@ -53,8 +53,10 @@ export type Product = {
   brand?: { id: string; name: string } | null
   stock?: number
   lowStock?: boolean
+  metaTitle?: string
+  metaDescription?: string
 }
-export type Category = { id: string; name: string; tagline: string; image: string | null; art: string; parentId: string | null; sortOrder: number; isActive: boolean; _count?: { products: number; subProducts: number } }
+export type Category = { id: string; name: string; tagline: string; description?: string; metaTitle?: string; metaDescription?: string; image: string | null; art: string; parentId: string | null; sortOrder: number; isActive: boolean; _count?: { products: number; subProducts: number } }
 export type Paged<T> = { items: T[]; total: number; page: number; pages: number }
 
 export type TicketStatus = 'OPEN' | 'IN_PROGRESS' | 'WAITING_CUSTOMER' | 'RESOLVED' | 'CLOSED'

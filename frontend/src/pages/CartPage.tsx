@@ -59,7 +59,7 @@ export function CartPage() {
             )}
           </div>
         ) : (
-          <div className="mt-8 grid items-start gap-6 lg:grid-cols-[1fr_380px]">
+          <div className="mt-8 grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
             <div className="space-y-4">
               {delivery && (
                 <p className="flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-white px-4 py-3 text-sm">

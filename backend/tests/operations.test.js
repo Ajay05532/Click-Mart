@@ -206,3 +206,46 @@ describe('printables', async () => {
     assert.match(renderPickList([base, second], store), /#1044 ×2, #1045 ×3/)
   })
 })
+
+describe('product links', async () => {
+  const { productLinkRows } = await import('../src/services/reports.js')
+  const base = 'https://shop.example.com'
+  const product = (over = {}) => ({
+    name: 'Almonds',
+    slug: 'california-almonds',
+    isActive: true,
+    category: { name: 'Dry Fruits' },
+    subcategory: null,
+    variants: [
+      { size: '500 g', price: 549, isActive: true, sortOrder: 1 },
+      { size: '250 g', price: 299, isActive: true, sortOrder: 0 },
+      { size: '1 kg', price: 999, isActive: false, sortOrder: 2 },
+    ],
+    ...over,
+  })
+
+  it('builds the product link and one link per active pack size, cheapest price first', () => {
+    const [row] = productLinkRows([product()], base)
+    assert.equal(row.link, 'https://shop.example.com/product/california-almonds')
+    assert.equal(row.status, 'Live')
+    assert.equal(row.from, 299)
+    assert.equal(row.sizes, '250 g, 500 g')
+    assert.equal(row.packLinks, `250 g: ${row.link}?size=250%20g | 500 g: ${row.link}?size=500%20g`)
+  })
+
+  it('marks switched-off products and products with no active pack as hidden', () => {
+    assert.equal(productLinkRows([product({ isActive: false })], base)[0].status, 'Hidden')
+    assert.equal(productLinkRows([product({ variants: [] })], base)[0].status, 'Hidden')
+    assert.equal(productLinkRows([product({ variants: [] })], base)[0].from, '')
+  })
+
+  it('is covered by the catalogue permission, above the :id route', async () => {
+    const { requiredPermission } = await import('../src/services/permissions.js')
+    assert.equal(requiredPermission('/products/links'), 'catalog')
+    const { adminRouter } = await import('../src/routes/admin/index.js')
+    const paths = []
+    const walk = (stack) => stack.forEach((layer) => (layer.route ? paths.push(layer.route.path) : layer.handle?.stack && walk(layer.handle.stack)))
+    walk(adminRouter.stack)
+    assert.ok(paths.indexOf('/products/links') !== -1 && paths.indexOf('/products/links') < paths.indexOf('/products/:id'))
+  })
+})

@@ -43,6 +43,8 @@ export const productFields = {
   isActive: z.boolean().default(true),
   isBestseller: z.boolean().default(false),
   featuredSize: z.string().nullish(),
+  metaTitle: z.string().trim().max(70).default(''),
+  metaDescription: z.string().trim().max(170).default(''),
 }
 export const createSchema = z
   .object({
@@ -84,6 +86,11 @@ export function variantRow(data) {
     weightGrams: data.weightGrams ?? weightFromSize(data.size),
   }
 }
+const SEO_KEYS = ['metaTitle', 'metaDescription', 'description']
+/** New rows leave empty search text to the column default, so saving works before the SEO migration is pasted. */
+export function withoutEmptySeo(data) {
+  return Object.fromEntries(Object.entries(data).filter(([key, value]) => !(SEO_KEYS.includes(key) && value === '')))
+}
 export function productRow(data) {
   const row = {
     ...data,
@@ -120,7 +127,7 @@ export async function createProduct(data, userId) {
   const product = await one(
     from('Product')
       .insert({
-        ...productRow(rest),
+        ...withoutEmptySeo(productRow(rest)),
         slug,
         subcategoryId: data.subcategoryId ?? null,
         featuredSize: data.featuredSize ?? variants[0].size,

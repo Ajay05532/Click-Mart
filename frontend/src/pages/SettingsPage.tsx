@@ -110,7 +110,7 @@ export function SettingsPage() {
           )}
         </div>
 
-        <div className="mt-4 grid items-start gap-4 lg:grid-cols-[230px_minmax(0,1fr)]">
+        <div className="mt-4 grid grid-cols-1 items-start gap-4 lg:grid-cols-[230px_minmax(0,1fr)]">
           <nav aria-label="Account" className="card p-2">
             {groups.map((group) => (
               <div key={group} className="mb-1 last:mb-0">

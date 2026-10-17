@@ -326,27 +326,75 @@ adminOpsRouter.patch('/staff/:id', adminOnly, async (req, res) => {
     ok: true,
   })
 })
+/** Readable names for the records in a page of the activity log. Deleted records simply get no name. */
+async function auditRecordNames(items) {
+  const idsOf = (entity) => [...new Set(items.filter((item) => item.entity === entity && item.entityId).map((item) => item.entityId))]
+  const names = new Map()
+  const put = (entity, id, label) => label && names.set(`${entity}:${id}`, label)
+  const lookups = {
+    Product: async (ids) => (await rows(from('Product').select('id, name').in('id', ids))).forEach((row) => put('Product', row.id, row.name)),
+    ProductVariant: async (ids) =>
+      (await rows(from('ProductVariant').select('id, size, product:Product(name)').in('id', ids))).forEach((row) => put('ProductVariant', row.id, `${row.product?.name ?? 'Product'} · ${row.size}`)),
+    Category: async (ids) => (await rows(from('Category').select('id, name').in('id', ids))).forEach((row) => put('Category', row.id, row.name)),
+    Brand: async (ids) => (await rows(from('Brand').select('id, name').in('id', ids))).forEach((row) => put('Brand', row.id, row.name)),
+    Order: async (ids) => (await rows(from('Order').select('id, number').in('id', ids))).forEach((row) => put('Order', row.id, `ORD-${row.number}`)),
+    Offer: async (ids) => (await rows(from('Offer').select('id, name').in('id', ids))).forEach((row) => put('Offer', row.id, row.name)),
+    Coupon: async (ids) => (await rows(from('Coupon').select('id, code').in('id', ids))).forEach((row) => put('Coupon', row.id, row.code)),
+    Banner: async (ids) => (await rows(from('Banner').select('id, title').in('id', ids))).forEach((row) => put('Banner', row.id, row.title)),
+    Faq: async (ids) => (await rows(from('Faq').select('id, question').in('id', ids))).forEach((row) => put('Faq', row.id, row.question)),
+    SupportTicket: async (ids) => (await rows(from('SupportTicket').select('id, number, subject').in('id', ids))).forEach((row) => put('SupportTicket', row.id, `TKT-${row.number} · ${row.subject}`)),
+    Review: async (ids) => {
+      const reviews = await rows(from('Review').select('id, productId').in('id', ids))
+      const products = new Map((await rows(from('Product').select('id, name').in('id', [...new Set(reviews.map((row) => row.productId))]))).map((row) => [row.id, row.name]))
+      reviews.forEach((row) => put('Review', row.id, `Review on ${products.get(row.productId) ?? 'a product'}`))
+    },
+    Login: async (ids) => (await peopleByIds(ids)).forEach((person, id) => put('Login', id, person.name || person.email)),
+  }
+  await Promise.all(
+    Object.entries(lookups).map(async ([entity, lookup]) => {
+      const ids = idsOf(entity)
+      if (!ids.length) return
+      try {
+        await lookup(ids)
+      } catch (error) {
+        console.error(`audit names for ${entity} failed`, error.message)
+      }
+    }),
+  )
+  return names
+}
+
 adminOpsRouter.get('/audit', adminOnly, async (req, res) => {
   const q = z
     .object({
       entity: z.string().optional(),
+      actor: z.string().optional(),
       page: z.coerce.number().int().min(1).default(1),
     })
     .parse(req.query)
+  const PAGE = 50
   let request = from('AuditLog')
-    .select('*')
+    .select('*', { count: 'exact' })
     .order('createdAt', {
       ascending: false,
     })
-    .range((q.page - 1) * 50, q.page * 50 - 1)
-  if (q.entity) request = request.eq('entity', q.entity)
-  const items = await rows(request)
-  const actors = await peopleByIds([...new Set(items.map((item) => item.actorId).filter(Boolean))])
+    .range((q.page - 1) * PAGE, q.page * PAGE - 1)
+  const entities = (q.entity ?? '').split(',').map((value) => value.trim()).filter(Boolean)
+  if (entities.length) request = request.in('entity', entities)
+  if (q.actor) request = request.eq('actorId', q.actor)
+  const { data, error, count: total } = await request
+  if (error) throw toHttpError(error)
+  const items = data ?? []
+  const [actors, names] = await Promise.all([peopleByIds([...new Set(items.map((item) => item.actorId).filter(Boolean))]), auditRecordNames(items)])
   res.json({
     items: items.map((item) => ({
       ...item,
       actor: item.actorId ? (actors.get(item.actorId) ?? null) : null,
+      record: (item.entityId && names.get(`${item.entity}:${item.entityId}`)) || item.diff?.name || item.diff?.code || item.diff?.title || null,
     })),
+    total: total ?? items.length,
+    page: q.page,
+    pages: Math.max(1, Math.ceil((total ?? items.length) / PAGE)),
   })
 })
 adminOpsRouter.get('/summary', async (_req, res) => {

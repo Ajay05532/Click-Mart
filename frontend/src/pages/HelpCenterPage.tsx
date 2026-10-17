@@ -6,8 +6,7 @@ import { BoxIcon, CardIcon, ChatIcon, ChevronIcon, ClockIcon, HeadsetIcon, MailI
 import { useAuth } from '../context/AuthContext.tsx'
 import { defaultFaqs } from '../data/helpFaq.ts'
 import { formatPrice } from '../lib/money.ts'
-import { useStoreSettings } from '../lib/catalog.ts'
-import { storeEmail, storePhone, storePhoneTel } from '../lib/store.ts'
+import { useStoreContact, useStoreSettings } from '../lib/catalog.ts'
 import { api } from '../lib/api.ts'
 import { faqCategoryLabel, isActiveTicket, statusInfo, timeAgo, useFaqs, useMyTickets, type Faq, type FaqCategory } from '../lib/support.ts'
 import { Badge } from '../components/ui/Primitives.tsx'
@@ -31,6 +30,7 @@ const readVotes = (): Record<string, boolean> => {
 }
 
 export function HelpCenterPage() {
+  const contact = useStoreContact()
   const { user } = useAuth()
   const settings = useStoreSettings()
   const faqQuery = useFaqs()
@@ -95,7 +95,7 @@ export function HelpCenterPage() {
       <HelpNav />
 
       <Container className="py-8 sm:py-10">
-        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {quick.map((item) => (
             <li key={item.label}>
               <Link to={item.to} className="card group flex h-full items-start gap-4 p-5 transition hover:-translate-y-0.5 hover:border-brand hover:shadow-lift">
@@ -111,7 +111,7 @@ export function HelpCenterPage() {
           ))}
         </ul>
 
-        <div className="mt-8 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_21rem]">
+        <div className="mt-8 grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_21rem]">
           <section id="answers" aria-labelledby="answers-title" className="scroll-mt-24">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <h2 id="answers-title" className="text-2xl font-extrabold tracking-tight">
@@ -203,7 +203,7 @@ export function HelpCenterPage() {
             )}
           </section>
 
-          <aside className="space-y-4 lg:sticky lg:top-24">
+          <aside className="min-w-0 space-y-4 lg:sticky lg:top-24">
             {user && open.length > 0 && (
               <section className="card p-5">
                 <div className="flex items-center justify-between">
@@ -244,19 +244,19 @@ export function HelpCenterPage() {
                 </Link>
                 <ul className="space-y-3 pt-2 text-sm">
                   <li>
-                    <a href={`tel:${storePhoneTel}`} className="flex items-center gap-3 font-semibold hover:text-brand">
+                    <a href={`tel:${contact.phoneTel}`} className="flex items-center gap-3 font-semibold hover:text-brand">
                       <span className="grid size-9 place-items-center rounded-full bg-brand-soft text-brand">
                         <PhoneIcon className="size-4" />
                       </span>
-                      {settings.supportPhone || storePhone}
+                      {contact.phone}
                     </a>
                   </li>
                   <li>
-                    <a href={`mailto:${settings.supportEmail || storeEmail}`} className="flex min-w-0 items-center gap-3 font-semibold hover:text-brand">
+                    <a href={`mailto:${contact.email}`} className="flex min-w-0 items-center gap-3 font-semibold hover:text-brand">
                       <span className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft text-brand">
                         <MailIcon className="size-4" />
                       </span>
-                      <span className="truncate">{settings.supportEmail || storeEmail}</span>
+                      <span className="truncate">{contact.email}</span>
                     </a>
                   </li>
                   <li className="flex items-center gap-3 text-muted">
@@ -281,7 +281,7 @@ export function HelpCenterPage() {
                   </li>
                 )}
                 <li className="flex gap-2">
-                  <RefreshIcon className="mt-0.5 size-4 shrink-0 text-brand" /> Cancel any order before it ships and prepaid amounts go back to you.
+                  <RefreshIcon className="mt-0.5 size-4 shrink-0 text-brand" /> Cancel any order until it is packed; prepaid amounts go back to you.
                 </li>
               </ul>
             </section>

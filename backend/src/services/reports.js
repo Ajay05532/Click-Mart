@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { env } from '../config/env.js'
 import { from, rpc, rows } from '../database/db.js'
 import { badRequest } from '../utils/errors.js'
 import { istDate, istDateTime, istRange } from '../utils/csv.js'
@@ -138,6 +139,36 @@ export function productsSold(orders, lines) {
     groups.set(key, row)
   }
   return [...groups.values()].map((row) => ({ ...row, orders: row.orders.size })).sort((a, b) => b.sales - a.sales)
+}
+
+/* ---------------- Product links ---------------- */
+
+/** One row per product with its storefront address. A product is live when it is switched on and has an active pack size. */
+export function productLinkRows(products, base) {
+  return products.map((product) => {
+    const packs = [...(product.variants ?? [])].filter((variant) => variant.isActive).sort((a, b) => a.sortOrder - b.sortOrder)
+    const link = `${base}/product/${encodeURIComponent(product.slug)}`
+    return {
+      name: product.name,
+      category: product.category?.name ?? '',
+      subcategory: product.subcategory?.name ?? '',
+      status: product.isActive && packs.length ? 'Live' : 'Hidden',
+      from: packs.length ? Math.min(...packs.map((pack) => pack.price)) : '',
+      sizes: packs.map((pack) => pack.size).join(', '),
+      link,
+      packLinks: packs.map((pack) => `${pack.size}: ${link}?size=${encodeURIComponent(pack.size)}`).join(' | '),
+    }
+  })
+}
+
+export async function loadProductLinks() {
+  const products = await fetchAll(() =>
+    from('Product')
+      .select('id, name, slug, isActive, category:Category!categoryId(name), subcategory:Category!subcategoryId(name), variants:ProductVariant(size, price, isActive, sortOrder)')
+      .order('name')
+      .order('id'),
+  )
+  return productLinkRows(products, env.STORE_URL.replace(/\/+$/, ''))
 }
 
 /* ---------------- Loading ---------------- */
@@ -415,6 +446,24 @@ export const reports = [
       }
       return out
     },
+  },
+  {
+    id: 'product-links',
+    title: 'Product links',
+    description: 'The web address of every product on your shop, with its pack-size links. Use it for ads, WhatsApp catalogues, marketplaces and social posts.',
+    range: false,
+    access: ['reports', 'catalog'],
+    columns: [
+      text('name', 'Product'),
+      text('category', 'Category'),
+      text('subcategory', 'Sub-category'),
+      text('status', 'Status'),
+      money('from', 'Price from'),
+      text('sizes', 'Pack sizes'),
+      text('link', 'Product link'),
+      text('packLinks', 'Pack-size links'),
+    ],
+    load: () => loadProductLinks(),
   },
   {
     id: 'customers',

@@ -5,7 +5,7 @@ import { Logo } from '../layout/Logo.tsx'
 /** Two-column layout shared by login, register and password reset pages. */
 export function AuthShell({ title, subtitle, children, footer }: { title: string; subtitle: string; children: ReactNode; footer?: ReactNode }) {
   return (
-    <div className="grid min-h-full flex-1 lg:grid-cols-[1fr_1.05fr]">
+    <div className="grid grid-cols-1 min-h-full flex-1 lg:grid-cols-[minmax(0,1fr)_1.05fr]">
       <div className="relative hidden overflow-hidden bg-ink lg:block">
         <img src="/images/almonds.jpg" alt="" className="absolute inset-0 size-full object-cover opacity-55" />
         <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/40 to-transparent" />

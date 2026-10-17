@@ -6,7 +6,7 @@ import { ApiError } from './api.ts'
 import App from './App.tsx'
 import { AuthProvider } from './auth.tsx'
 import './index.css'
-import { UiProvider } from './ui.tsx'
+import { PageError, UiProvider } from './ui.tsx'
 
 const client = new QueryClient({
   defaultOptions: {
@@ -23,9 +23,11 @@ createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={client}>
       <BrowserRouter>
         <UiProvider>
-          <AuthProvider>
-            <App />
-          </AuthProvider>
+          <PageError>
+            <AuthProvider>
+              <App />
+            </AuthProvider>
+          </PageError>
         </UiProvider>
       </BrowserRouter>
     </QueryClientProvider>

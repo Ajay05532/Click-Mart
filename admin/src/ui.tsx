@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
+import { Component, createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { createPortal } from 'react-dom'
 import { ApiError, api, assetUrl } from './api.ts'
 
@@ -39,6 +39,27 @@ export function Button({
 
 export function Spinner({ className = 'size-5' }: { className?: string }) {
   return <span className={`anim-spin inline-block rounded-full border-2 border-current border-t-transparent opacity-70 ${className}`} role="status" aria-label="Loading" />
+}
+
+/** Keeps a broken page from wiping the whole admin screen. */
+export class PageError extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null }
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+  componentDidCatch(error: Error) {
+    console.error(error)
+  }
+  render() {
+    if (!this.state.error) return this.props.children
+    return (
+      <div className="mx-auto mt-10 max-w-md rounded-2xl border border-line bg-white p-6 text-center shadow-card">
+        <p className="font-extrabold">This page hit a problem</p>
+        <p className="mt-2 text-sm text-muted">{this.state.error.message}</p>
+        <Button variant="outline" className="mt-4" onClick={() => this.setState({ error: null })}>Try again</Button>
+      </div>
+    )
+  }
 }
 
 export function PageLoader() {

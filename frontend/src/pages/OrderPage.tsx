@@ -126,7 +126,7 @@ export function OrderPage() {
 
           {!ended && <Milestone status={order.status} />}
 
-          <div className="mt-5 grid items-start gap-5 lg:grid-cols-3">
+          <div className="mt-5 grid grid-cols-1 items-start gap-5 lg:grid-cols-3">
             <section className="card overflow-hidden lg:col-span-2">
               <div className="flex items-center justify-between px-5 pt-5 sm:px-6">
                 <h2 className="text-sm font-extrabold tracking-wide text-muted uppercase">Items</h2>

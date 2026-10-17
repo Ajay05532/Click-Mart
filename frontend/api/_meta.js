@@ -17,8 +17,8 @@ const STATIC = {
   '/recipes': ['Dry fruit recipes', 'Quick, simple recipes with almonds, cashews, pistachios, raisins and seeds. Ideas for breakfast, snacks and desserts from the ClickMart kitchen.'],
   '/wellness': ['Health & Wellness', 'How to enjoy almonds, walnuts, dates and seeds through the week. Practical, no-hype ideas for everyday eating.'],
   '/help': ['Help centre', 'Answers about orders, delivery, payments, refunds and returns, plus a team that replies to every request. ClickMart support, Monday to Saturday.'],
-  '/privacy': ['Privacy Policy', 'What ClickMart keeps when you browse, sign in or place an order, and what it never stores.'],
-  '/terms': ['Terms & Conditions', 'How ClickMart orders, shipping, coupons and returns work, in plain language.'],
+  '/privacy': ['Privacy Policy', 'How ClickMart collects, uses and protects account, order, payment and support data for customers in India.'],
+  '/terms': ['Terms & Conditions', 'How ClickMart orders, shipping, payments, cancellations and returns work, in plain language.'],
 }
 
 const organization = (site) => ({
@@ -47,12 +47,51 @@ const breadcrumbs = (site, trail) => ({
   '@type': 'BreadcrumbList',
   itemListElement: trail.map((item, index) => ({ '@type': 'ListItem', position: index + 1, name: item.name, item: `${site}${item.path}` })),
 })
+/** Same rules as productSearchText / categorySearchText in src/lib/seo.ts. */
+export function productText(product) {
+  const prices = (product.packs ?? []).map((pack) => pack.price)
+  const from = prices.length ? Math.min(...prices) : NaN
+  const sizes = [...new Set((product.packs ?? []).map((pack) => pack.size))]
+  const about = plain(product.blurb || product.description, 400)
+  return {
+    title: plain(product.metaTitle, 70) || `${product.name} — Buy Online`,
+    description: plain(
+      plain(product.metaDescription, 170) ||
+        [Number.isFinite(from) ? `From ₹${from}.` : '', sizes.length ? `Packs: ${sizes.join(', ')}.` : '', about || `Buy ${product.name} online from ClickMart.`, 'Packed fresh in Patna, delivered across India.']
+          .filter(Boolean)
+          .join(' '),
+      160,
+    ),
+  }
+}
+export function categoryText(category) {
+  const intro = plain(category.description || category.tagline, 400)
+  return {
+    title: plain(category.metaTitle, 70) || `Buy ${category.name} Online`,
+    description: plain(plain(category.metaDescription, 170) || `${intro ? `${intro} ` : ''}Buy ${category.name} online from ClickMart. Packed fresh to order and delivered across India.`, 160),
+  }
+}
+const collection = (site, { name, path, description, products }) => ({
+  '@context': 'https://schema.org',
+  '@type': 'CollectionPage',
+  name,
+  url: `${site}${path}`,
+  description,
+  isPartOf: { '@id': `${site}/#website` },
+  mainEntity: {
+    '@type': 'ItemList',
+    numberOfItems: products.length,
+    itemListElement: products.map((item, index) => ({ '@type': 'ListItem', position: index + 1, name: item.name, url: `${site}/product/${encodeURIComponent(item.slug)}` })),
+  },
+})
+
 export function productJsonLd(site, product) {
   const photos = (product.images?.length ? product.images : product.image ? [product.image] : []).map((src) => absolute(site, src))
   return {
     '@context': 'https://schema.org',
     '@type': 'Product',
     name: product.name,
+    url: `${site}/product/${product.slug}`,
     description: plain(product.description || product.blurb || product.name, 5000),
     sku: product.packs?.[0]?.variantId,
     ...(photos.length ? { image: photos } : {}),
@@ -91,12 +130,11 @@ export async function metaFor(path, query, site, fetchJson = getJson) {
     if (result.status === 404) return { ...base, title: 'Product not found', noindex: true, canonical: null, status: 404, body: '<h1>Product not found</h1><p><a href="/shop">Browse the shop</a></p>' }
     if (!result.ok) return { ...base, canonical: `${site}/product/${slug}` }
     const item = result.data.product
-    const from = Math.min(...item.packs.map((pack) => pack.price))
-    const about = plain(item.blurb || item.description, 400)
+    const text = productText(item)
     return {
       ...base,
-      title: `${item.name} — Buy Online`,
-      description: plain(`${Number.isFinite(from) ? `From ₹${from}. ` : ''}${about || `Buy ${item.name} online from ClickMart.`}`, 160),
+      title: text.title,
+      description: text.description,
       canonical: `${site}/product/${item.slug}`,
       image: absolute(site, item.image) || base.image,
       type: 'product',
@@ -113,15 +151,23 @@ export async function metaFor(path, query, site, fetchJson = getJson) {
     const sub = category?.subcategories?.find((item) => item.id === query.sub)
     const name = sub?.name ?? category?.name
     const list = await fetchJson(`/products?pageSize=24${category ? `&category=${encodeURIComponent(category.id)}` : ''}${sub ? `&sub=${encodeURIComponent(sub.id)}` : ''}`)
+    const items = list.ok ? (list.data.items ?? []) : []
+    const text = category ? categoryText(sub ? { ...sub, tagline: category.tagline } : category) : null
     const heading = name ? `Buy ${name} Online` : 'Shop Dry Fruits, Nuts and Seeds Online'
+    const path = `/shop${category ? `?category=${category.id}${sub ? `&sub=${sub.id}` : ''}` : ''}`
+    const description = text ? text.description : 'Browse premium almonds, cashews, raisins, walnuts and seeds. Packed fresh to order, delivered across India, with cash on delivery available.'
+    const intro = plain((sub ?? category)?.description, 1500)
     return {
       ...base,
-      title: heading,
-      description: plain(name ? `${category?.tagline ? `${category.tagline} ` : ''}Buy ${name} online from ClickMart. Packed fresh to order and delivered across India.` : 'Browse premium almonds, cashews, raisins, walnuts and seeds. Packed fresh to order, delivered across India, with cash on delivery available.', 160),
-      canonical: `${site}/shop${category ? `?category=${category.id}${sub ? `&sub=${sub.id}` : ''}` : ''}`,
+      title: text ? text.title : heading,
+      description,
+      canonical: `${site}${path}`,
       noindex: filtered,
-      jsonLd: [breadcrumbs(site, [{ name: 'Home', path: '/' }, { name: 'Shop', path: '/shop' }, ...(category ? [{ name: category.name, path: `/shop?category=${category.id}` }] : [])])],
-      body: `<h1>${esc(heading)}</h1>${list.ok ? productLinks(list.data.items ?? []) : ''}`,
+      jsonLd: [
+        breadcrumbs(site, [{ name: 'Home', path: '/' }, { name: 'Shop', path: '/shop' }, ...(category ? [{ name: category.name, path: `/shop?category=${category.id}` }] : []), ...(category && sub ? [{ name: sub.name, path }] : [])]),
+        ...(items.length ? [collection(site, { name: name ?? 'All dry fruits', path, description, products: items })] : []),
+      ],
+      body: `<h1>${esc(heading)}</h1>${intro ? `<p>${esc(intro)}</p>` : ''}${items.length ? productLinks(items) : ''}`,
     }
   }
 

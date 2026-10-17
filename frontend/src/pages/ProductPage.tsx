@@ -1,9 +1,10 @@
-import { useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Container } from '../components/layout/Container.tsx'
 import { ProductCard } from '../components/product/ProductCard.tsx'
 import { ProductMedia } from '../components/product/ProductMedia.tsx'
+import { ProductTabs } from '../components/product/ProductTabs.tsx'
+import { ShareButton } from '../components/product/ShareButton.tsx'
 import { Breadcrumbs } from '../components/ui/Breadcrumbs.tsx'
 import { QuantityInput } from '../components/ui/QuantityInput.tsx'
 import { Stars } from '../components/ui/Stars.tsx'
@@ -13,14 +14,11 @@ import { useDeliveryLocation } from '../context/LocationContext.tsx'
 import { useWishlist } from '../context/WishlistContext.tsx'
 import { useCart } from '../context/CartContext.tsx'
 import { useAuth } from '../context/AuthContext.tsx'
-import { api, errorMessage } from '../lib/api.ts'
-import { useProduct, useProductReviews, useStoreSettings } from '../lib/catalog.ts'
+import { useProduct, useStoreSettings } from '../lib/catalog.ts'
 import { discountPercent, formatPrice } from '../lib/money.ts'
 import { breadcrumbJsonLd, productJsonLd } from '../lib/jsonld.ts'
-import { useSeo, type Seo } from '../lib/seo.ts'
+import { absoluteUrl, productSearchText, useSeo, type Seo } from '../lib/seo.ts'
 import type { Product } from '../types.ts'
-
-const tabs = ['Description', 'Nutrition Facts', 'Reviews'] as const
 
 /** Four working days from today, skipping Sundays. Shown as "22 Oct". */
 function deliveryBy(from = new Date()) {
@@ -35,11 +33,8 @@ function deliveryBy(from = new Date()) {
 
 /** Title, description, social preview and structured data for a product page. */
 function productSeo(product: Product): Seo {
-  const from = Math.min(...product.packs.map((pack) => pack.price))
-  const about = (product.blurb || product.description || '').trim()
   return {
-    title: `${product.name} — Buy Online`,
-    description: `${Number.isFinite(from) ? `From ₹${from}. ` : ''}${about || `Buy ${product.name} online from ClickMart.`}`,
+    ...productSearchText(product),
     path: `/product/${product.slug}`,
     image: product.image,
     type: 'product',
@@ -64,7 +59,7 @@ export function ProductPage() {
     return (
       <div className="bg-canvas">
         <Container className="py-10">
-          <div className="card grid animate-pulse gap-8 p-4 md:p-7 lg:grid-cols-[minmax(0,480px)_1fr]" aria-busy="true">
+          <div className="card grid grid-cols-1 animate-pulse gap-8 p-4 md:p-7 lg:grid-cols-[minmax(0,480px)_minmax(0,1fr)]" aria-busy="true">
             <div className="aspect-square rounded-3xl bg-canvas" />
             <div className="space-y-4">
               <div className="h-6 w-1/3 rounded bg-canvas" />
@@ -106,7 +101,6 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
   const qty = inCart > 0 ? inCart : pending
   const photos = product.images?.length ? product.images : product.image ? [product.image] : []
   const [photo, setPhoto] = useState(0)
-  const [reviewPhotos, setReviewPhotos] = useState<File[]>([])
   const shown = photos[photo] ?? null
   const changeQty = (next: number) => {
     if (inCart > 0) updateQty(pack.variantId, next)
@@ -118,15 +112,7 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
     nextParams.set('size', next)
     setParams(nextParams, { replace: true })
   }
-  const [tab, setTab] = useState<(typeof tabs)[number]>('Description')
   const { user } = useAuth()
-  const queryClient = useQueryClient()
-  const reviewsQuery = useProductReviews(product.slug)
-  const [reviewForm, setReviewForm] = useState({ rating: 5, comment: '' })
-  const [reviewMessage, setReviewMessage] = useState('')
-  const [reviewError, setReviewError] = useState('')
-  const [reviewBusy, setReviewBusy] = useState(false)
-  const productReviews = reviewsQuery.data ?? []
   const packStock = pack.stock ?? 0
   const packInStock = packStock > 0
 
@@ -145,10 +131,19 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
             { label: product.name },
           ]}
         />
-        <div className="card mt-4 grid gap-8 p-4 md:p-7 lg:grid-cols-[minmax(0,480px)_1fr]">
+        <div className="card mt-4 grid grid-cols-1 gap-8 p-4 md:p-7 lg:grid-cols-[minmax(0,480px)_minmax(0,1fr)]">
           <div className="h-fit lg:sticky lg:top-32">
             <div className="group relative overflow-hidden rounded-3xl bg-canvas">
               {off > 0 && <span className="absolute top-4 left-4 z-10 rounded-full bg-accent px-3 py-1.5 text-xs font-extrabold text-white shadow-md">{off}% OFF</span>}
+              <div className="absolute top-4 right-4 z-10">
+                <ShareButton
+                  variant="overlay"
+                  label={`Share ${product.name}`}
+                  title={`${product.name} · ClickMart`}
+                  text={`${product.name} (${pack.size}) for ${formatPrice(pack.price)} at ClickMart`}
+                  url={absoluteUrl(`/product/${product.slug}?size=${encodeURIComponent(pack.size)}`)}
+                />
+              </div>
               <ProductMedia
                 name={product.name}
                 image={shown}
@@ -241,6 +236,11 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
               >
                 <HeartIcon className="size-5" filled={wishlist.has(product.id)} />
               </button>
+              <ShareButton
+                title={`${product.name} · ClickMart`}
+                text={`${product.name} (${pack.size}) for ${formatPrice(pack.price)} at ClickMart`}
+                url={absoluteUrl(`/product/${product.slug}?size=${encodeURIComponent(pack.size)}`)}
+              />
             </div>
             {!product.inStock && <p className="mt-3 text-sm font-medium text-rose-600">Currently out of stock.</p>}
             <div className="mt-6 space-y-2">
@@ -288,161 +288,7 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
           </div>
         </div>
 
-        <div className="card mt-6 p-5 sm:p-7">
-          <div className="flex gap-6 border-b border-line">
-            {tabs.map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setTab(item)}
-                className={`-mb-px border-b-[3px] pb-3 text-sm font-extrabold transition ${
-                  tab === item ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink'
-                }`}
-              >
-                {item}
-                {item === 'Reviews' ? ` (${productReviews.length})` : ''}
-              </button>
-            ))}
-          </div>
-          {tab === 'Description' && (
-            <div className="max-w-3xl py-5">
-              <p className="leading-7 text-muted">{product.description}</p>
-              <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-ink">
-                {product.highlights.map((highlight) => (
-                  <li key={highlight}>{highlight}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {tab === 'Nutrition Facts' && (
-            <div className="max-w-md py-5">
-              <p className="text-sm font-semibold">Nutrition value (per 100g)</p>
-              <table className="mt-3 w-full text-sm">
-                <tbody>
-                  {product.nutrition.map((row) => (
-                    <tr key={row.label} className="border-b border-line">
-                      <th className="py-2 text-left font-medium">{row.label}</th>
-                      <td className="py-2 text-right text-muted">{row.value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {tab === 'Reviews' && (
-            <div className="grid gap-6 py-5 lg:grid-cols-[1fr_280px]">
-              <div className="space-y-4">
-                {productReviews.map((review) => (
-                  <article key={review.id} className="rounded-xl border border-line p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="font-semibold">
-                        {review.name} <span className="font-normal text-muted">· {review.city}</span>
-                      </p>
-                      <span className="text-xs text-muted">{review.verified && <span className="mr-2 font-bold text-success">Verified buyer</span>}{new Date(review.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                    </div>
-                    <div className="mt-2">
-                      <Stars value={review.rating} className="size-3.5" />
-                    </div>
-                    <p className="mt-2 text-sm text-muted">{review.comment}</p>
-                    {!!review.images?.length && (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {review.images.map((src) => (
-                          <a key={src} href={src} target="_blank" rel="noreferrer" className="size-16 overflow-hidden rounded-lg bg-canvas ring-1 ring-line">
-                            <img src={src} alt="Photo from a customer review" loading="lazy" decoding="async" className="size-full object-cover" />
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                  </article>
-                ))}
-              </div>
-              <form
-                className="h-fit rounded-xl bg-canvas p-4"
-                onSubmit={async (event: FormEvent) => {
-                  event.preventDefault()
-                  if (reviewForm.comment.trim().length < 5) return setReviewError('Tell us a little more (at least 5 characters)')
-                  setReviewBusy(true)
-                  setReviewError('')
-                  try {
-                    let images: string[] = []
-                    if (reviewPhotos.length) {
-                      const form = new FormData()
-                      reviewPhotos.forEach((file) => form.append('images', file))
-                      images = (await api<{ urls: string[] }>(`/products/${product.slug}/review-images`, { form })).urls
-                    }
-                    const result = await api<{ message: string }>(`/products/${product.slug}/reviews`, { body: { rating: reviewForm.rating, comment: reviewForm.comment.trim(), images } })
-                    setReviewMessage(result.message)
-                    setReviewForm({ rating: 5, comment: '' })
-                    setReviewPhotos([])
-                    void queryClient.invalidateQueries({ queryKey: ['reviews', product.slug] })
-                  } catch (error) {
-                    setReviewError(errorMessage(error))
-                  } finally {
-                    setReviewBusy(false)
-                  }
-                }}
-              >
-                <p className="font-semibold">Write a review</p>
-                {!user ? (
-                  <p className="mt-3 text-sm text-muted">
-                    <Link to="/login" state={{ from: `/product/${product.slug}` }} className="font-bold text-brand">Log in</Link> to share your experience.
-                  </p>
-                ) : reviewMessage ? (
-                  <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-success">{reviewMessage}</p>
-                ) : (
-                  <>
-                    <label className="mt-3 block text-sm">
-                      Rating
-                      <select
-                        value={reviewForm.rating}
-                        onChange={(event) => setReviewForm({ ...reviewForm, rating: Number(event.target.value) })}
-                        className="field mt-1"
-                      >
-                        {[5, 4, 3, 2, 1].map((value) => (
-                          <option key={value} value={value}>
-                            {value} stars
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <textarea
-                      required
-                      value={reviewForm.comment}
-                      onChange={(event) => { setReviewForm({ ...reviewForm, comment: event.target.value }); setReviewError('') }}
-                      placeholder="How was it?"
-                      className="field mt-3 h-24"
-                    />
-                    <label className="mt-3 block text-sm font-semibold">
-                      Photos
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        multiple
-                        className="mt-1 block w-full text-xs font-normal text-muted file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-brand"
-                        onChange={(event) => {
-                          const next = [...(event.target.files ?? [])].slice(0, 4)
-                          const bad = next.find((file) => file.size > 5 * 1024 * 1024)
-                          if (bad) {
-                            setReviewError('Each photo must be under 5 MB')
-                            event.target.value = ''
-                            return
-                          }
-                          setReviewError('')
-                          setReviewPhotos(next)
-                        }}
-                      />
-                    </label>
-                    {reviewPhotos.length > 0 && <p className="mt-1 text-xs text-muted">{reviewPhotos.length} of 4 photos selected</p>}
-                    {reviewError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-600">{reviewError}</p>}
-                    <button type="submit" disabled={reviewBusy} className="btn btn-brand mt-3 w-full">
-                      Submit review
-                    </button>
-                  </>
-                )}
-              </form>
-            </div>
-          )}
-        </div>
+        <ProductTabs product={product} />
 
         <h2 className="mt-14 text-2xl font-extrabold tracking-tight">You may also like</h2>
         <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">

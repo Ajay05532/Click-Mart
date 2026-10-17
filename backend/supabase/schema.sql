@@ -801,6 +801,12 @@ ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "gstPercent" INTEGER NOT 
 ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "countryOfOrigin" TEXT NOT NULL DEFAULT 'India';
 ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "ingredients" TEXT NOT NULL DEFAULT '';
 ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "shelfLifeDays" INTEGER;
+-- Search listing text. Empty means the shop writes it from the name, price and description.
+ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "metaTitle" TEXT NOT NULL DEFAULT '';
+ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "metaDescription" TEXT NOT NULL DEFAULT '';
+ALTER TABLE catalog."Category" ADD COLUMN IF NOT EXISTS "description" TEXT NOT NULL DEFAULT '';
+ALTER TABLE catalog."Category" ADD COLUMN IF NOT EXISTS "metaTitle" TEXT NOT NULL DEFAULT '';
+ALTER TABLE catalog."Category" ADD COLUMN IF NOT EXISTS "metaDescription" TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE catalog."ProductVariant" ADD COLUMN IF NOT EXISTS "barcode" TEXT;
 ALTER TABLE catalog."ProductVariant" ADD COLUMN IF NOT EXISTS "weightGrams" INTEGER;
@@ -1606,9 +1612,9 @@ COMMENT ON TABLE payment."Payment" IS 'One attempt to collect the order total.';
 
 INSERT INTO ops."Setting" ("key", "value") VALUES
   ('storeName',             '"ClickMart"'),
-  ('supportEmail',          '"hello@clickmart.com"'),
-  ('supportPhone',          '"+91 80 4567 8900"'),
-  ('address',               '"42, Residency Road, Bengaluru 560025"'),
+  ('supportEmail',          '"tanusharmaa79@gmail.com"'),
+  ('supportPhone',          '"+91 93048 37512"'),
+  ('address',               '"Ground Floor, Kashyap Sadan, Near Shemford School, Sampatchak, Jaganpura–Udaini Road, Patna, Bihar 804453"'),
   ('freeShippingThreshold', '499'),
   ('shippingFee',           '49'),
   ('codEnabled',            'true'),

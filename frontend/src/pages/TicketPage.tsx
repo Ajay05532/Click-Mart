@@ -151,7 +151,7 @@ export function TicketPage() {
             {info.note}
           </div>
 
-          <div className="mt-5 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_17rem]">
+          <div className="mt-5 grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_17rem]">
             <section className="card overflow-hidden" aria-label="Conversation">
               <ol className="max-h-[34rem] min-h-48 space-y-5 overflow-y-auto bg-canvas/50 p-4 sm:p-6">
                 {messages.map((message) => (

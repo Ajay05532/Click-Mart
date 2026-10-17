@@ -27,7 +27,7 @@ export const assetUrl = (path: string | null | undefined) => {
   if (!path) return ''
   if (/^https?:/.test(path)) return path
   // Catalogue images that start with /images/ live in the storefront's public folder.
-  return path.startsWith('/uploads') ? `${BASE}${path}` : `${import.meta.env.VITE_STOREFRONT_URL ?? 'http://localhost:5173'}${path}`
+  return path.startsWith('/uploads') ? `${BASE}${path}` : `${import.meta.env.VITE_STOREFRONT_URL || (import.meta.env.DEV ? 'http://localhost:5173' : '')}${path}`
 }
 
 type Options = {

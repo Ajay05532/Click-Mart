@@ -42,6 +42,27 @@ describe('page meta for crawlers', () => {
     assert.equal(meta.jsonLd.find((item) => item['@type'] === 'BreadcrumbList').itemListElement.length, 4)
   })
 
+  it('uses the search title and description set in the admin, and lists pack sizes otherwise', async () => {
+    const custom = { ...product, metaTitle: 'California Almonds 250g & 500g', metaDescription: 'Crunchy California almonds, sealed fresh.' }
+    const set = await metaFor('/product/california-almonds', {}, site, api({ '/products/california-almonds': { ok: true, status: 200, data: { product: custom } } }))
+    assert.equal(set.title, 'California Almonds 250g & 500g')
+    assert.equal(set.description, 'Crunchy California almonds, sealed fresh.')
+    const auto = await metaFor('/product/california-almonds', {}, site, api({ '/products/california-almonds': { ok: true, status: 200, data: { product } } }))
+    assert.match(auto.description, /Packs: 250 g, 500 g\./)
+    assert.equal(auto.jsonLd.find((item) => item['@type'] === 'Product').url, `${site}/product/california-almonds`)
+  })
+
+  it('gives a category page its own text, intro and product list', async () => {
+    const category = { id: 'dry-fruits-nuts', name: 'Dry Fruits & Nuts', tagline: 'Everyday crunch', description: 'Almonds, cashews and pistachios packed in Patna.', metaTitle: 'Dry Fruits Online in India', metaDescription: 'Shop dry fruits online.', subcategories: [] }
+    const fetchJson = api({ '/categories': { ok: true, status: 200, data: { items: [category] } }, '/products': { ok: true, status: 200, data: { items: [product] } } })
+    const meta = await metaFor('/shop', { category: 'dry-fruits-nuts' }, site, fetchJson)
+    assert.equal(meta.title, 'Dry Fruits Online in India')
+    assert.equal(meta.description, 'Shop dry fruits online.')
+    assert.match(meta.body, /<p>Almonds, cashews and pistachios packed in Patna\.<\/p>/)
+    const page = meta.jsonLd.find((item) => item['@type'] === 'CollectionPage')
+    assert.equal(page.mainEntity.itemListElement[0].url, `${site}/product/california-almonds`)
+  })
+
   it('answers 404 and noindex for a product that does not exist', async () => {
     const meta = await metaFor('/product/nope', {}, site, api({}))
     assert.equal(meta.status, 404)
@@ -130,6 +151,7 @@ describe('robots.txt and sitemap', () => {
     assert.match(xml, /<loc>https:\/\/shop\.example\.com\/product\/california-almonds<\/loc>/)
     assert.match(xml, /<image:loc>https:\/\/shop\.example\.com\/images\/almonds\.jpg<\/image:loc>/)
     assert.match(xml, /product\/a%26b/)
+    assert.match(buildSitemap(site, { products: [{ ...product, updatedAt: '2026-10-17T10:00:00.000Z' }] }), /<lastmod>2026-10-17<\/lastmod>/)
     assert.ok(!/\/cart|\/checkout|\/login/.test(xml))
   })
 })

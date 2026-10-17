@@ -7,7 +7,22 @@ import { badRequest, conflict, notFound } from '../../utils/errors.js'
 import { slugify } from '../../utils/slug.js'
 import { getSettings } from '../../services/settings.js'
 import { actor, adminOnly } from '../../middleware/auth.js'
-import { assertBrand, assertCategory, createProduct, createSchema, like, productFields, productRow, sku, variantRow, variantSchema, weightFromSize } from '../../services/catalogWrite.js'
+import { loadProductLinks } from '../../services/reports.js'
+import { env } from '../../config/env.js'
+import {
+  assertBrand,
+  assertCategory,
+  createProduct,
+  createSchema,
+  like,
+  productFields,
+  productRow,
+  sku,
+  variantRow,
+  withoutEmptySeo,
+  variantSchema,
+  weightFromSize,
+} from '../../services/catalogWrite.js'
 export const adminCatalogRouter = Router()
 const PRODUCT_ADMIN_SELECT = '*, variants:ProductVariant(*), category:Category!categoryId(name), brand:Brand(id, name)'
 adminCatalogRouter.get('/brands', async (req, res) => {
@@ -120,6 +135,12 @@ adminCatalogRouter.get('/products', async (req, res) => {
     page: q.page,
     pages: Math.max(1, Math.ceil(totalCount / q.pageSize)),
   })
+})
+/** Every product's storefront link, for copying. Hidden products are left out unless asked for. Must stay above /products/:id. */
+adminCatalogRouter.get('/products/links', async (req, res) => {
+  const includeHidden = req.query.includeHidden === '1'
+  const items = (await loadProductLinks()).filter((item) => includeHidden || item.status === 'Live')
+  res.json({ items, store: env.STORE_URL.replace(/\/+$/, '') })
 })
 adminCatalogRouter.get('/products/:id', async (req, res) => {
   const product = await maybe(from('Product').select(PRODUCT_ADMIN_SELECT).eq('id', String(req.params.id)).maybeSingle())
@@ -418,6 +439,9 @@ const categorySchema = z.object({
   parentId: z.string().nullish(),
   sortOrder: z.number().int().default(0),
   isActive: z.boolean().default(true),
+  description: z.string().trim().max(1000).default(''),
+  metaTitle: z.string().trim().max(70).default(''),
+  metaDescription: z.string().trim().max(170).default(''),
 })
 adminCatalogRouter.get('/categories', async (_req, res) => {
   const [categories, products] = await Promise.all([rows(from('Category').select('*').order('sortOrder').order('name')), rows(from('Product').select('categoryId, subcategoryId'))])
@@ -441,7 +465,7 @@ adminCatalogRouter.post('/categories', async (req, res) => {
   const category = await one(
     from('Category')
       .insert({
-        ...data,
+        ...withoutEmptySeo(data),
         id,
         image: data.image ?? null,
         parentId: data.parentId ?? null,
@@ -455,12 +479,14 @@ adminCatalogRouter.post('/categories', async (req, res) => {
   })
 })
 adminCatalogRouter.patch('/categories/:id', async (req, res) => {
-  const data = categorySchema
+  const body = req.body ?? {}
+  const parsed = categorySchema
     .omit({
       id: true,
     })
     .partial()
-    .parse(req.body)
+    .parse(body)
+  const data = Object.fromEntries(Object.entries(parsed).filter(([key]) => Object.prototype.hasOwnProperty.call(body, key)))
   const id = String(req.params.id)
   if (data.parentId === id) throw badRequest('A category cannot be its own parent')
   const category = await one(from('Category').update(data).eq('id', id).select().single())

@@ -5,9 +5,11 @@ import { useWishlist } from '../../context/WishlistContext.tsx'
 import { CartIcon, HeartIcon } from '../icons.tsx'
 import { featuredPack, productPath } from '../../lib/catalog.ts'
 import { discountPercent, formatPrice } from '../../lib/money.ts'
+import { absoluteUrl } from '../../lib/seo.ts'
 import type { Pack, Product } from '../../types.ts'
 import { Stars } from '../ui/Stars.tsx'
 import { ProductMedia } from './ProductMedia.tsx'
+import { ShareButton } from './ShareButton.tsx'
 
 export function ProductCard({ product, pack: chosen }: { product: Product; pack?: Pack }) {
   const { addItem } = useCart()
@@ -55,19 +57,28 @@ export function ProductCard({ product, pack: chosen }: { product: Product; pack?
           </span>
         )}
       </Link>
-      <button
-        type="button"
-        onClick={() => wishlist.toggle(product.id)}
-        aria-pressed={saved}
-        aria-label={saved ? `Remove ${product.name} from wishlist` : `Save ${product.name}`}
-        className={`absolute top-3 right-3 grid size-9 place-items-center rounded-full bg-white/95 shadow-md backdrop-blur transition duration-200 hover:scale-110 ${
-          saved ? 'text-rose-500' : 'text-ink hover:text-rose-500'
-        }`}
-      >
-        <span key={saved ? 'saved' : 'idle'} className={saved ? 'motion-pop' : undefined}>
-          <HeartIcon className="size-[18px]" filled={saved} />
-        </span>
-      </button>
+      <div className="absolute top-3 right-3 flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={() => wishlist.toggle(product.id)}
+          aria-pressed={saved}
+          aria-label={saved ? `Remove ${product.name} from wishlist` : `Save ${product.name}`}
+          className={`grid size-9 place-items-center rounded-full bg-white/95 shadow-md backdrop-blur transition duration-200 hover:scale-110 ${
+            saved ? 'text-rose-500' : 'text-ink hover:text-rose-500'
+          }`}
+        >
+          <span key={saved ? 'saved' : 'idle'} className={saved ? 'motion-pop' : undefined}>
+            <HeartIcon className="size-[18px]" filled={saved} />
+          </span>
+        </button>
+        <ShareButton
+          variant="overlay"
+          label={`Share ${title}`}
+          title={`${product.name} · ClickMart`}
+          text={`${product.name} (${pack.size}) for ${formatPrice(pack.price)} at ClickMart`}
+          url={absoluteUrl(href)}
+        />
+      </div>
 
       <div className="flex flex-1 flex-col p-3.5 sm:p-4">
         <p className="text-[11px] font-bold tracking-wide text-muted uppercase">

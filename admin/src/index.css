@@ -62,7 +62,7 @@ input[type='checkbox'] {
   to { transform: rotate(360deg); }
 }
 .anim-rise { animation: rise 0.25s ease both; }
-.anim-in { animation: fade 0.2s ease both; }
+.anim-in { animation: fade 0.2s ease; }
 .anim-fade { animation: fade 0.15s ease both; }
 .anim-slide { animation: slide-in 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .anim-spin { animation: spin 0.7s linear infinite; }

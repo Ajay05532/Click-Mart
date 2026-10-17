@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth, type Permission } from './auth.tsx'
-import { PageLoader } from './ui.tsx'
+import { PageError, PageLoader } from './ui.tsx'
 import { useQuery } from '@tanstack/react-query'
 import { api } from './api.ts'
 
@@ -102,7 +102,7 @@ export function Layout() {
   const badge = (to: string) => (to === '/orders' ? summary.data?.ordersNeedingAction : to === '/inventory' ? (summary.data?.outOfStock ?? 0) + (summary.data?.lowStock ?? 0) : to === '/support' ? summary.data?.supportNeedingReply : 0)
 
   return (
-    <div className="min-h-svh lg:grid lg:grid-cols-[260px_1fr]">
+    <div className="min-h-svh lg:grid lg:grid-cols-[260px_minmax(0,1fr)]">
       {open && <div className="anim-fade fixed inset-0 z-30 bg-ink/50 lg:hidden" onClick={() => setOpen(false)} />}
       <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-ink text-white transition-transform duration-200 lg:sticky lg:top-0 lg:h-svh lg:w-auto lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex items-center gap-3 px-5 py-5">
@@ -143,7 +143,7 @@ export function Layout() {
         <div className="border-t border-white/10 p-4">
           <div className="flex items-center gap-3">
             <NavLink to="/account" title="My account" className="flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 -m-1 hover:bg-white/10">
-              <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full bg-white/15 text-sm font-extrabold">{user.avatarUrl ? <img src={user.avatarUrl} alt="" className="size-full object-cover" /> : user.name.slice(0, 1).toUpperCase()}</span>
+              <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full bg-white/15 text-sm font-extrabold">{user.avatarUrl ? <img src={user.avatarUrl} alt="" className="size-full object-cover" /> : (user.name || '?').slice(0, 1).toUpperCase()}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-bold">{user.name}</span>
                 <span className="block text-[11px] text-white/50">{user.role === 'ADMIN' ? 'Administrator' : 'Staff'} · Account</span>
@@ -165,9 +165,11 @@ export function Layout() {
           <p className="ml-auto hidden text-xs font-semibold text-muted sm:block">{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })}</p>
         </header>
         <main className="mx-auto max-w-7xl p-4 sm:p-6 lg:px-8 lg:py-7">
-          <div key={location.pathname} className="anim-in">
-            <Outlet />
-          </div>
+          <PageError key={location.pathname}>
+            <div className="anim-in">
+              <Outlet />
+            </div>
+          </PageError>
         </main>
       </div>
     </div>

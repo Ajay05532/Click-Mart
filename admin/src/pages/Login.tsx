@@ -29,7 +29,7 @@ export function LoginPage() {
   }
 
   return (
-    <div className="grid min-h-svh lg:grid-cols-2">
+    <div className="grid grid-cols-1 min-h-svh lg:grid-cols-2">
       <div className="relative hidden overflow-hidden bg-ink p-12 text-white lg:flex lg:flex-col lg:justify-between">
         <div className="pointer-events-none absolute -top-24 -right-24 size-96 rounded-full bg-accent/30 blur-3xl" />
         <div className="relative flex items-center gap-3">
