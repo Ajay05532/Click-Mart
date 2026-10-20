@@ -4,8 +4,8 @@ export function autoProductText(input: { name: string; blurb: string; descriptio
   const sizes = [...new Set(input.sizes.filter(Boolean))]
   const about = (input.blurb || input.description).trim()
   return {
-    title: `${input.name.trim() || 'Product name'} — Buy Online`,
-    description: [Number.isFinite(from) ? `From ₹${from}.` : '', sizes.length ? `Packs: ${sizes.join(', ')}.` : '', about || `Buy ${input.name.trim() || 'this product'} online from ClickMart.`, 'Packed fresh in Patna, delivered across India.']
+    title: `Buy ${input.name.trim() || 'Product name'} Online${Number.isFinite(from) ? ` at ₹${from}` : ''}`,
+    description: [`Buy ${input.name.trim() || 'this product'} online${Number.isFinite(from) ? ` at ₹${from}` : ''}.`, sizes.length ? `Packs: ${sizes.join(', ')}.` : '', 'Fresh from Patna, COD available.', about]
       .filter(Boolean)
       .join(' '),
   }
@@ -16,7 +16,7 @@ export function autoCategoryText(input: { name: string; tagline: string; descrip
   const intro = (input.description || input.tagline).trim()
   const name = input.name.trim() || 'this category'
   return {
-    title: `Buy ${name} Online`,
-    description: `${intro ? `${intro} ` : ''}Buy ${name} online from ClickMart. Packed fresh to order and delivered across India.`,
+    title: `Buy ${name} Online at Best Price`,
+    description: `Shop ${name} online at ClickMart. ${intro ? `${intro} ` : ''}Packed fresh to order, fast delivery across India, COD available.`,
   }
 }

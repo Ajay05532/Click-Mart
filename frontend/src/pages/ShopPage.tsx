@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Container } from '../components/layout/Container.tsx'
 import { ProductCard } from '../components/product/ProductCard.tsx'
 import { Breadcrumbs } from '../components/ui/Breadcrumbs.tsx'
@@ -8,6 +8,7 @@ import { ProductMedia } from '../components/product/ProductMedia.tsx'
 import { packCards, useCategories, useProducts } from '../lib/catalog.ts'
 import { formatPrice } from '../lib/money.ts'
 import { breadcrumbJsonLd, categoryJsonLd } from '../lib/jsonld.ts'
+import { categoryPath } from '../lib/paths.ts'
 import { categorySearchText, useSeo } from '../lib/seo.ts'
 import type { Category, CategoryId, PackSize } from '../types.ts'
 
@@ -16,7 +17,22 @@ const PRICE_CAP = 1500
 const packSizes: PackSize[] = ['100g', '250g', '500g', '1kg']
 
 export function ShopPage() {
-  const [params, setParams] = useSearchParams()
+  // A category lives at /category/<id>[/<sub>]. The page reads it as if it were ?category=&sub= so filters keep working.
+  const route = useParams()
+  const navigate = useNavigate()
+  const [search, setSearch] = useSearchParams()
+  const onCategoryRoute = Boolean(route.category)
+  const params = new URLSearchParams(search)
+  if (route.category) {
+    params.set('category', route.category)
+    if (route.sub) params.set('sub', route.sub)
+  }
+  const setParams = (next: URLSearchParams | Record<string, string>) => {
+    const value = new URLSearchParams(next)
+    // Filters that change the list leave the clean category address for the plain shop page.
+    if (onCategoryRoute) navigate({ pathname: '/shop', search: value.toString() })
+    else setSearch(value)
+  }
   const query = (params.get('q') ?? '').trim().toLowerCase()
   const selectedCategories = params.getAll('category')
   const sub = params.get('sub') ?? ''
@@ -74,18 +90,18 @@ export function ShopPage() {
   const seoCategory = selectedCategories.length === 1 ? categories.find((category) => category.id === selectedCategories[0]) : undefined
   const seoSub = seoCategory?.subcategories.find((item) => item.id === sub)
   const seoText = seoCategory ? categorySearchText(seoSub ? { ...seoSub, tagline: seoCategory.tagline } : seoCategory) : undefined
-  const seoPath = `/shop${seoCategory ? `?category=${seoCategory.id}${seoSub ? `&sub=${seoSub.id}` : ''}` : ''}`
+  const seoPath = seoCategory ? categoryPath(seoCategory.id, seoSub?.id) : '/shop'
   const listed = [...new Map(visible.map((product) => [product.id, product])).values()]
   useSeo({
     title: query ? `Results for “${params.get('q')}”` : seoText ? seoText.title : 'Shop Dry Fruits, Nuts and Seeds Online',
     description: seoText ? seoText.description : 'Browse premium almonds, cashews, raisins, walnuts and seeds. Packed fresh to order, delivered across India, with cash on delivery available.',
     path: seoPath,
-    noindex: !onlyCategory,
+    noindex: !onlyCategory || (onCategoryRoute && categories.length > 0 && !seoCategory),
     jsonLd: [
       breadcrumbJsonLd([
         { name: 'Home', path: '/' },
         { name: 'Shop', path: '/shop' },
-        ...(seoCategory ? [{ name: seoCategory.name, path: `/shop?category=${seoCategory.id}` }] : []),
+        ...(seoCategory ? [{ name: seoCategory.name, path: categoryPath(seoCategory.id) }] : []),
         ...(seoCategory && seoSub ? [{ name: seoSub.name, path: seoPath }] : []),
       ]),
       ...(onlyCategory && listed.length
@@ -188,6 +204,11 @@ export function ShopPage() {
       canClear={canClear}
     />
   )
+
+  // The old /shop?category=<id> address moves to the clean category address.
+  if (!onCategoryRoute && selectedCategories.length === 1 && [...search.keys()].every((key) => key === 'category' || key === 'sub')) {
+    return <Navigate to={categoryPath(selectedCategories[0]!, sub || null)} replace />
+  }
 
   return (
     <div className="bg-canvas">

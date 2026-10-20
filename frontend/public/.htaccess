@@ -1,0 +1,51 @@
+# ClickMart storefront on Apache (MilesWeb). Upload this with the rest of dist/.
+# 1. Everything uses https://theclickmart.com. 2. Pre-built pages (shop.html, product/<slug>.html ...) are
+# served for their clean addresses. 3. Any other page opens the app (spa.html), which draws it in the browser.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  RewriteCond %{HTTPS} off [OR]
+  RewriteCond %{HTTP_HOST} ^www\. [NC]
+  RewriteRule ^ https://theclickmart.com%{REQUEST_URI} [L,R=301]
+
+  # /product/almonds -> product/almonds.html (built by `npm run build`)
+  RewriteCond %{REQUEST_FILENAME}.html -f
+  RewriteRule ^(.*[^/])$ $1.html [L]
+
+  # Anything that is not a real file, folder or file-like address opens the app.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteCond %{REQUEST_URI} !\.[A-Za-z0-9]{2,5}$
+  RewriteRule ^ /spa.html [L]
+</IfModule>
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript text/javascript application/json application/xml image/svg+xml text/plain
+</IfModule>
+
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/html "access plus 10 minutes"
+  ExpiresByType application/xml "access plus 1 hour"
+  ExpiresByType text/css "access plus 1 year"
+  ExpiresByType application/javascript "access plus 1 year"
+  ExpiresByType text/javascript "access plus 1 year"
+  ExpiresByType image/png "access plus 1 month"
+  ExpiresByType image/jpeg "access plus 1 month"
+  ExpiresByType image/webp "access plus 1 month"
+  ExpiresByType image/svg+xml "access plus 1 month"
+  ExpiresByType font/woff2 "access plus 1 year"
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Strict-Transport-Security "max-age=31536000"
+  # Private pages stay out of search results even for crawlers that ignore robots.txt.
+  SetEnvIf Request_URI "^/(cart|checkout|order|orders|settings|account|login|forgot-password|reset-password|wishlist|track|help/tickets|help/new)(/|$)" PRIVATE_PAGE
+  Header set X-Robots-Tag "noindex, nofollow" env=PRIVATE_PAGE
+</IfModule>
+
+DirectoryIndex index.html
+ErrorDocument 404 /spa.html

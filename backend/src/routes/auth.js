@@ -83,14 +83,20 @@ authRouter.post('/login', async (req, res) => {
     .object({
       email: z.string().trim().toLowerCase().email(),
       password: z.string().min(1),
+      // The admin app sends this so staff get a precise reason. The storefront keeps one generic message
+      // so a stranger cannot test which customer emails exist.
+      portal: z.enum(['admin']).optional(),
     })
     .parse(req.body)
+  const adminPortal = data.portal === 'admin'
   const user = await findAccountByEmail(data.email)
-  if (!user) {
+  if (!user || (adminPortal && user.role === 'CUSTOMER')) {
     await burnTime(data.password)
-    throw unauthorized('Incorrect email or password')
+    throw unauthorized(adminPortal ? 'No staff account found with this email' : 'Incorrect email or password')
   }
-  if (!(await verifyPassword(data.password, user.passwordHash))) throw unauthorized('Incorrect email or password')
+  if (!(await verifyPassword(data.password, user.passwordHash))) {
+    throw unauthorized(adminPortal ? 'Incorrect password. Try again or reset it' : 'Incorrect email or password')
+  }
   if (user.isBlocked) throw unauthorized('This account has been disabled')
   const patch = {
     lastLoginAt: new Date().toISOString(),

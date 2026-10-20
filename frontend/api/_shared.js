@@ -46,3 +46,6 @@ export const PUBLIC_PAGES = [
 
 /** Pages that must never be indexed (accounts, money, forms). */
 export const PRIVATE_PREFIXES = ['/cart', '/checkout', '/order', '/orders', '/settings', '/account', '/login', '/forgot-password', '/reset-password', '/wishlist', '/track', '/help/tickets', '/help/new']
+
+/** Address of a category (or sub-category) page. Keep in step with categoryPath in src/lib/paths.ts. */
+export const categoryPath = (category, sub) => `/category/${encodeURIComponent(category)}${sub ? `/${encodeURIComponent(sub)}` : ''}`

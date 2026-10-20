@@ -1,4 +1,4 @@
-import { PUBLIC_PAGES, absolute, esc, getJson, siteOrigin } from './_shared.js'
+import { PUBLIC_PAGES, absolute, categoryPath, esc, getJson, siteOrigin } from './_shared.js'
 
 const MAX_PAGES = 40
 
@@ -9,8 +9,8 @@ export function buildSitemap(site, { categories = [], products = [] }) {
   const out = []
   for (const page of PUBLIC_PAGES) out.push(entry(page.path, `\n    <lastmod>${today}</lastmod>\n    <changefreq>${page.changefreq}</changefreq>\n    <priority>${page.priority}</priority>`))
   for (const category of categories) {
-    out.push(entry(`/shop?category=${encodeURIComponent(category.id)}`, `\n    <changefreq>daily</changefreq>\n    <priority>0.8</priority>`))
-    for (const sub of category.subcategories ?? []) out.push(entry(`/shop?category=${encodeURIComponent(category.id)}&sub=${encodeURIComponent(sub.id)}`, `\n    <changefreq>daily</changefreq>\n    <priority>0.6</priority>`))
+    out.push(entry(categoryPath(category.id), `\n    <changefreq>daily</changefreq>\n    <priority>0.8</priority>`))
+    for (const sub of category.subcategories ?? []) out.push(entry(categoryPath(category.id, sub.id), `\n    <changefreq>daily</changefreq>\n    <priority>0.6</priority>`))
   }
   for (const product of products) {
     const photos = (product.images?.length ? product.images : product.image ? [product.image] : []).slice(0, 5)

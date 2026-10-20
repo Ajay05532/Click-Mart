@@ -60,6 +60,8 @@ export default function App() {
               <Route element={<StoreLayout />}>
                 <Route index element={<HomePage />} />
                 <Route path="shop" element={<ShopPage />} />
+                <Route path="category/:category" element={<ShopPage />} />
+                <Route path="category/:category/:sub" element={<ShopPage />} />
                 <Route path="product/:slug" element={<ProductPage />} />
                 <Route path="cart" element={<CartPage />} />
                 <Route path="checkout" element={<RequireAuth><CheckoutPage /></RequireAuth>} />

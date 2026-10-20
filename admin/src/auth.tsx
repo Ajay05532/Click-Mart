@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const login = useCallback(async (email: string, password: string) => {
-    const result = await api<{ user: Me; accessToken: string }>('/auth/login', { body: { email, password } })
+    const result = await api<{ user: Me; accessToken: string }>('/auth/login', { body: { email, password, portal: 'admin' } })
     if (result.user.role === 'CUSTOMER') {
       await api('/auth/logout', { method: 'POST' }).catch(() => undefined)
       throw new Error('This account does not have access to the admin area.')

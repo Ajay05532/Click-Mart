@@ -25,15 +25,16 @@ export type Seo = {
  * Search text for a product when the admin left it empty: price, pack sizes and the short
  * description. Keep in step with api/_meta.js so crawlers and the browser agree.
  */
-export function productSearchText(product: { name: string; blurb?: string; description?: string; packs: { size: string; price: number }[]; metaTitle?: string; metaDescription?: string }) {
+export function productSearchText(product: { name: string; blurb?: string; description?: string; packs: { size: string; price: number }[]; rating?: number; reviewCount?: number; metaTitle?: string; metaDescription?: string }) {
   const from = Math.min(...product.packs.map((pack) => pack.price))
   const sizes = [...new Set(product.packs.map((pack) => pack.size))]
   const about = (product.blurb || product.description || '').trim()
+  const rated = (product.reviewCount ?? 0) > 0 && (product.rating ?? 0) > 0 ? `Rated ${Number((product.rating ?? 0).toFixed(1))}/5 by ${product.reviewCount} shoppers.` : ''
   return {
-    title: product.metaTitle?.trim() || `${product.name} — Buy Online`,
+    title: product.metaTitle?.trim() || (Number.isFinite(from) ? `Buy ${product.name} Online at ₹${from}` : `Buy ${product.name} Online`),
     description:
       product.metaDescription?.trim() ||
-      [Number.isFinite(from) ? `From ₹${from}.` : '', sizes.length ? `Packs: ${sizes.join(', ')}.` : '', about || `Buy ${product.name} online from ClickMart.`, 'Packed fresh in Patna, delivered across India.']
+      [`Buy ${product.name} online${Number.isFinite(from) ? ` at ₹${from}` : ''}.`, sizes.length ? `Packs: ${sizes.join(', ')}.` : '', rated, 'Fresh from Patna, COD available.', about]
         .filter(Boolean)
         .join(' '),
   }
@@ -43,8 +44,8 @@ export function productSearchText(product: { name: string; blurb?: string; descr
 export function categorySearchText(category: { name: string; tagline?: string; description?: string; metaTitle?: string; metaDescription?: string }) {
   const intro = (category.description || category.tagline || '').trim()
   return {
-    title: category.metaTitle?.trim() || `Buy ${category.name} Online`,
-    description: category.metaDescription?.trim() || `${intro ? `${intro} ` : ''}Buy ${category.name} online from ClickMart. Packed fresh to order and delivered across India.`,
+    title: category.metaTitle?.trim() || `Buy ${category.name} Online at Best Price`,
+    description: category.metaDescription?.trim() || `Shop ${category.name} online at ClickMart. ${intro ? `${intro} ` : ''}Packed fresh to order, fast delivery across India, COD available.`,
   }
 }
 

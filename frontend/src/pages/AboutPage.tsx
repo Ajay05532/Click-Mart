@@ -8,6 +8,7 @@ import { useCategories, useProducts, useStoreContact, useStoreSettings } from '.
 import { organizationJsonLd } from '../lib/jsonld.ts'
 import { formatPrice } from '../lib/money.ts'
 import { useSeo } from '../lib/seo.ts'
+import { categoryPath } from '../lib/paths.ts'
 
 const photos = ['/images/almonds.jpg', '/images/cashews.jpg', '/images/raisins.jpg', '/images/seeds.jpg']
 
@@ -122,7 +123,7 @@ export function AboutPage() {
             <ul className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {categories.map((category) => (
                 <li key={category.id}>
-                  <Link to={`/shop?category=${category.id}`} className="card group flex items-center gap-4 p-3 transition hover:border-brand/30">
+                  <Link to={categoryPath(category.id)} className="card group flex items-center gap-4 p-3 transition hover:border-brand/30">
                     <span className="size-16 shrink-0 overflow-hidden rounded-2xl bg-canvas">
                       <ProductMedia name={category.name} image={category.image} art={category.art} className="motion-zoom size-full" />
                     </span>

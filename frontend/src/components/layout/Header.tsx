@@ -26,6 +26,7 @@ import {
 import { ChevronIcon } from '../icons.tsx'
 import type { Category, Product } from '../../types.ts'
 import { Logo } from './Logo.tsx'
+import { categoryPath } from '../../lib/paths.ts'
 
 // Desktop bar: shopping-first, like most e-commerce stores. Info pages live in the footer and mobile menu.
 const links = [
@@ -202,7 +203,7 @@ export function Header() {
                     return (
                       <Link
                         key={category.id}
-                        to={`/shop?category=${category.id}`}
+                        to={categoryPath(category.id)}
                         onMouseEnter={() => setMenuCategory(category.id)}
                         onFocus={() => setMenuCategory(category.id)}
                         onClick={() => setPanel(null)}
@@ -568,7 +569,7 @@ export function Header() {
               <div className="pt-2">
                 <div className="flex items-center justify-between px-2">
                   <p className="text-xs font-semibold tracking-wide text-muted uppercase">{lone.name}</p>
-                  <Link to={`/shop?category=${lone.id}`} onClick={() => setMobileOpen(false)} className="text-xs font-bold text-brand">
+                  <Link to={categoryPath(lone.id)} onClick={() => setMobileOpen(false)} className="text-xs font-bold text-brand">
                     View all
                   </Link>
                 </div>
@@ -588,14 +589,14 @@ export function Header() {
                 <p className="px-2 pt-2 text-xs font-semibold tracking-wide text-muted uppercase">Categories</p>
                 {categories.map((category) => (
                   <div key={category.id}>
-                    <Link to={`/shop?category=${category.id}`} onClick={() => setMobileOpen(false)} className="block rounded-lg px-2 py-2 font-semibold hover:bg-canvas">
+                    <Link to={categoryPath(category.id)} onClick={() => setMobileOpen(false)} className="block rounded-lg px-2 py-2 font-semibold hover:bg-canvas">
                       {category.name}
                     </Link>
                     <div className="flex flex-wrap gap-1 px-2 pb-2">
                       {category.subcategories.map((sub) => (
                         <Link
                           key={sub.id}
-                          to={`/shop?category=${category.id}&sub=${sub.id}`}
+                          to={categoryPath(category.id, sub.id)}
                           onClick={() => setMobileOpen(false)}
                           className="rounded-full bg-canvas px-2 py-1 text-xs text-ink"
                         >
@@ -704,7 +705,7 @@ function ProductShelf({
           <p className="text-sm font-extrabold">{category.name}</p>
           <p className="mt-0.5 text-xs text-muted">{category.tagline}</p>
         </div>
-        <Link to={`/shop?category=${category.id}`} onClick={onNavigate} className="shrink-0 text-xs font-bold text-brand">
+        <Link to={categoryPath(category.id)} onClick={onNavigate} className="shrink-0 text-xs font-bold text-brand">
           View all
         </Link>
       </div>
@@ -720,7 +721,7 @@ function ProductShelf({
       </ul>
       {total > products.length && (
         <Link
-          to={`/shop?category=${category.id}${grade === 'all' ? '' : `&sub=${grade}`}`}
+          to={categoryPath(category.id, grade === 'all' ? null : grade)}
           onClick={onNavigate}
           className="mt-2 block rounded-xl bg-canvas px-3 py-2.5 text-center text-xs font-bold text-brand"
         >
@@ -750,7 +751,7 @@ function CategoryPane({
           {category.tagline && <p className="mt-0.5 text-xs text-muted">{category.tagline}</p>}
         </div>
         <Link
-          to={`/shop?category=${category.id}`}
+          to={categoryPath(category.id)}
           onClick={onNavigate}
           className="shrink-0 text-xs font-bold text-brand"
         >
@@ -764,7 +765,7 @@ function CategoryPane({
           return (
             <Link
               key={sub.id}
-              to={`/shop?category=${category.id}&sub=${sub.id}`}
+              to={categoryPath(category.id, sub.id)}
               onClick={onNavigate}
               className="rounded-xl border border-line px-3 py-2.5 hover:border-brand hover:bg-brand-soft"
             >
@@ -794,7 +795,7 @@ function CategoryPane({
       </ul>
       {total > items.length && (
         <Link
-          to={`/shop?category=${category.id}`}
+          to={categoryPath(category.id)}
           onClick={onNavigate}
           className="mt-2 block rounded-xl bg-canvas px-3 py-2.5 text-center text-xs font-bold text-brand"
         >

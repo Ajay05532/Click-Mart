@@ -18,6 +18,7 @@ import { useProduct, useStoreSettings } from '../lib/catalog.ts'
 import { discountPercent, formatPrice } from '../lib/money.ts'
 import { breadcrumbJsonLd, productJsonLd } from '../lib/jsonld.ts'
 import { absoluteUrl, productSearchText, useSeo, type Seo } from '../lib/seo.ts'
+import { categoryPath } from '../lib/paths.ts'
 import type { Product } from '../types.ts'
 
 /** Four working days from today, skipping Sundays. Shown as "22 Oct". */
@@ -43,7 +44,7 @@ function productSeo(product: Product): Seo {
       breadcrumbJsonLd([
         { name: 'Home', path: '/' },
         { name: 'Shop', path: '/shop' },
-        { name: product.categoryName ?? 'Product', path: `/shop?category=${product.category}` },
+        { name: product.categoryName ?? 'Product', path: categoryPath(product.category) },
         { name: product.name, path: `/product/${product.slug}` },
       ]),
     ],
@@ -127,7 +128,7 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
           items={[
             { label: 'Home', to: '/' },
             { label: 'Shop', to: '/shop' },
-            { label: product.categoryName ?? 'Product', to: `/shop?category=${product.category}` },
+            { label: product.categoryName ?? 'Product', to: categoryPath(product.category) },
             { label: product.name },
           ]}
         />

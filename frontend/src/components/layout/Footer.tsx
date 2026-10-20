@@ -4,6 +4,7 @@ import { useCategories, useStoreContact } from '../../lib/catalog.ts'
 import { MailIcon, PhoneIcon, PinIcon } from '../icons.tsx'
 import { Container } from './Container.tsx'
 import { Logo } from './Logo.tsx'
+import { categoryPath } from '../../lib/paths.ts'
 
 const year = new Date().getFullYear()
 
@@ -84,7 +85,7 @@ export function Footer() {
             </li>
             {categories.map((category) => (
               <li key={category.id}>
-                <FooterLink to={`/shop?category=${category.id}`}>{category.name}</FooterLink>
+                <FooterLink to={categoryPath(category.id)}>{category.name}</FooterLink>
               </li>
             ))}
           </FooterColumn>

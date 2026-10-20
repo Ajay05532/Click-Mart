@@ -11,6 +11,7 @@ import { discountPercent, formatPrice } from '../lib/money.ts'
 import { organizationJsonLd, websiteJsonLd } from '../lib/jsonld.ts'
 import { useSeo } from '../lib/seo.ts'
 import type { Pack, Product } from '../types.ts'
+import { categoryPath } from '../lib/paths.ts'
 
 const showcase = [
   { name: 'Almonds', image: '/images/almonds.jpg', query: 'almond' },
@@ -100,7 +101,7 @@ export function HomePage() {
     return pack ? [{ product, pack }] : []
   })
   const circles = (catalog.data?.items ?? []).filter((product) => inStockPacks(product).length > 0)
-  const viewAll = activeTab === 'sale' ? '/sale' : lone ? `/shop?category=${lone.id}` : '/shop'
+  const viewAll = activeTab === 'sale' ? '/sale' : lone ? categoryPath(lone.id) : '/shop'
 
   const copyCode = async (code: string) => {
     try {
@@ -269,7 +270,7 @@ export function HomePage() {
               {categories.slice(0, 6).map((category) => (
                 <li key={category.id}>
                   <Link
-                    to={`/shop?category=${category.id}`}
+                    to={categoryPath(category.id)}
                     className="text-xl font-extrabold tracking-wide uppercase opacity-90 transition hover:text-accent hover:opacity-100 sm:text-3xl"
                   >
                     {category.name}
