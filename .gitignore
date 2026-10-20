@@ -11,6 +11,9 @@ build/
 .env
 .env.*
 !.env.example
+# Public build settings for the two Vite apps (only VITE_ values, no secrets).
+!frontend/.env.production
+!admin/.env.production
 
 # Logs
 logs/
