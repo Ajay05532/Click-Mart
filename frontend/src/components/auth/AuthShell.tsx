@@ -1,38 +1,104 @@
-import { useState, type InputHTMLAttributes, type ReactNode } from 'react'
+import { useState, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Logo } from '../layout/Logo.tsx'
+import { useStoreSettings } from '../../lib/catalog.ts'
+import { formatPrice } from '../../lib/money.ts'
+import { CashIcon, LockIcon, ShieldIcon, TruckIcon } from '../icons.tsx'
 
-/** Two-column layout shared by login, register and password reset pages. */
+/** Wraps a field with a leading icon, used across the login/register/password forms. */
+export function IconField({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <div className="group relative">
+      <span className="pointer-events-none absolute top-6 left-3.5 z-10 -translate-y-1/2 text-muted/70 transition-colors group-focus-within:text-brand">{icon}</span>
+      {children}
+    </div>
+  )
+}
+
+const PHOTOS = [
+  { src: '/images/almonds.jpg', alt: 'Almonds' },
+  { src: '/images/cashews.jpg', alt: 'Cashews' },
+  { src: '/images/walnuts.jpg', alt: 'Walnuts' },
+  { src: '/images/raisins.jpg', alt: 'Raisins' },
+]
+
+function Perks() {
+  const settings = useStoreSettings()
+  const perks = [
+    { icon: TruckIcon, text: settings.shippingFee === 0 ? 'Free delivery on every order' : `Free delivery over ${formatPrice(settings.freeShippingThreshold)}` },
+    ...(settings.codEnabled ? [{ icon: CashIcon, text: 'Cash on delivery available' }] : []),
+    { icon: ShieldIcon, text: 'Secure payments by Razorpay' },
+  ]
+  return (
+    <ul className="space-y-3">
+      {perks.map(({ icon: Icon, text }) => (
+        <li key={text} className="flex items-center gap-3 text-sm font-semibold text-white/90">
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/10 ring-1 ring-white/15">
+            <Icon className="size-[18px] text-orange-300" />
+          </span>
+          {text}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** Card layout shared by login, register, verification and password reset pages. */
 export function AuthShell({ title, subtitle, children, footer }: { title: string; subtitle: string; children: ReactNode; footer?: ReactNode }) {
   return (
-    <div className="grid grid-cols-1 min-h-full flex-1 lg:grid-cols-[minmax(0,1fr)_1.05fr]">
-      <div className="relative hidden overflow-hidden bg-ink lg:block">
-        <img src="/images/almonds.jpg" alt="" className="absolute inset-0 size-full object-cover opacity-55" />
-        <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/40 to-transparent" />
-        <div className="relative flex h-full flex-col justify-end p-12 text-white">
-          <p className="eyebrow !text-orange-300">ClickMart</p>
-          <h2 className="mt-3 max-w-sm text-4xl leading-tight font-extrabold tracking-tight">Fresh dry fruits, one tap away.</h2>
-          <ul className="mt-6 space-y-2.5 text-white/80">
-            {['Track every order live', 'Save your favourites', 'Faster checkout with saved details'].map((item) => (
-              <li key={item} className="flex items-center gap-3">
-                <span className="grid size-5 place-items-center rounded-full bg-accent text-[11px] font-bold">✓</span>
-                {item}
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-      <div className="grid place-items-center bg-gradient-to-b from-cream to-white px-4 py-12 sm:px-8">
-        <div className="w-full max-w-md">
-          <Logo className="h-14 w-auto" />
-          <h1 className="mt-6 text-3xl font-extrabold tracking-tight">{title}</h1>
-          <p className="mt-1.5 text-sm text-muted">{subtitle}</p>
-          <div className="mt-8">{children}</div>
-          {footer && <div className="mt-6 text-center text-sm text-muted">{footer}</div>}
+    <div className="relative flex-1 overflow-hidden bg-gradient-to-b from-cream via-white to-canvas">
+      <div aria-hidden="true" className="pointer-events-none absolute -top-40 -left-32 size-[28rem] rounded-full bg-brand/10 blur-3xl" />
+      <div aria-hidden="true" className="pointer-events-none absolute -right-24 -bottom-40 size-[26rem] rounded-full bg-accent/15 blur-3xl" />
+
+      <div className="relative mx-auto flex w-full max-w-5xl items-center px-4 py-8 sm:px-6 sm:py-14">
+        <div className="grid w-full grid-cols-1 overflow-hidden rounded-[28px] border border-line/80 bg-white shadow-[0_30px_80px_-30px_rgb(18_58_134/0.35)] lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+          <aside className="relative hidden min-w-0 overflow-hidden bg-gradient-to-br from-brand via-brand-dark to-[#081f4d] p-10 text-white lg:flex lg:flex-col">
+            <div aria-hidden="true" className="absolute -top-24 -right-24 size-72 rounded-full bg-accent/25 blur-3xl" />
+            <p className="relative text-xs font-extrabold tracking-[0.2em] text-orange-300 uppercase">ClickMart</p>
+            <h2 className="relative mt-3 text-[2rem] leading-[1.15] font-extrabold tracking-tight">
+              Pure, natural goodness,
+              <br />
+              <span className="text-orange-300">delivered to your door.</span>
+            </h2>
+            <div className="relative mt-8 grid grid-cols-2 gap-3">
+              {PHOTOS.map((photo, index) => (
+                <div key={photo.src} className={`overflow-hidden rounded-2xl ring-1 ring-white/15 ${index % 2 ? 'translate-y-5' : ''}`}>
+                  <img src={photo.src} alt={photo.alt} className="aspect-[4/3] size-full object-cover transition duration-500 hover:scale-105" />
+                </div>
+              ))}
+            </div>
+            <div className="relative mt-auto pt-12">
+              <Perks />
+            </div>
+          </aside>
+
+          <div className="min-w-0">
+            <div className="flex gap-2 overflow-hidden bg-gradient-to-r from-brand to-brand-dark p-3 lg:hidden" aria-hidden="true">
+              {PHOTOS.map((photo) => (
+                <img key={photo.src} src={photo.src} alt="" className="h-16 min-w-0 flex-1 rounded-xl object-cover ring-1 ring-white/20" />
+              ))}
+            </div>
+            <div className="px-5 py-8 sm:px-10 sm:py-11">
+              <h1 className="text-[1.75rem] leading-tight font-extrabold tracking-tight sm:text-3xl">{title}</h1>
+              <p className="mt-2 text-sm leading-6 text-muted">{subtitle}</p>
+              <div className="mt-7">{children}</div>
+              {footer && <div className="mt-7 border-t border-line pt-5 text-center text-sm text-muted">{footer}</div>}
+              <p className="mt-5 flex items-center justify-center gap-1.5 text-xs text-muted">
+                <LockIcon className="size-3.5" />
+                Your details are encrypted and never shared.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   )
+}
+
+/** Tracks Caps Lock while typing a password, for the "Caps Lock is on" hint. */
+function useCapsLock() {
+  const [on, setOn] = useState(false)
+  const read = (event: KeyboardEvent<HTMLInputElement>) => setOn(event.getModifierState('CapsLock'))
+  return { on, read }
 }
 
 export function FormField({ label, error, hint, children }: { label: string; error?: string; hint?: ReactNode; children: ReactNode }) {
@@ -53,18 +119,39 @@ export function FormField({ label, error, hint, children }: { label: string; err
 
 export function PasswordInput(props: InputHTMLAttributes<HTMLInputElement>) {
   const [shown, setShown] = useState(false)
+  const caps = useCapsLock()
   return (
-    <div className="relative">
-      <input {...props} type={shown ? 'text' : 'password'} className="field pr-16" />
-      <button
-        type="button"
-        onClick={() => setShown((value) => !value)}
-        aria-label={shown ? 'Hide password' : 'Show password'}
-        className="absolute top-1/2 right-3 -translate-y-1/2 rounded-md px-1.5 py-1 text-xs font-bold text-brand hover:bg-brand-soft"
-      >
-        {shown ? 'Hide' : 'Show'}
-      </button>
-    </div>
+    <>
+      <div className="relative">
+        <input
+          {...props}
+          type={shown ? 'text' : 'password'}
+          className="field pr-12 pl-11"
+          onKeyUp={(event) => {
+            caps.read(event)
+            props.onKeyUp?.(event)
+          }}
+          onKeyDown={(event) => {
+            caps.read(event)
+            props.onKeyDown?.(event)
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => setShown((value) => !value)}
+          aria-label={shown ? 'Hide password' : 'Show password'}
+          aria-pressed={shown}
+          className="absolute top-1/2 right-2 grid size-9 -translate-y-1/2 place-items-center rounded-lg text-muted transition hover:bg-brand-soft hover:text-brand"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="size-[18px]" aria-hidden="true">
+            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+            <circle cx="12" cy="12" r="3" />
+            {shown && <path d="m3 3 18 18" />}
+          </svg>
+        </button>
+      </div>
+      {caps.on && <span className="mt-1.5 block text-xs font-semibold text-accent-dark">Caps Lock is on</span>}
+    </>
   )
 }
 

@@ -14,6 +14,8 @@ import { geoRouter } from './routes/location.js'
 import { meRouter } from './routes/me.js'
 import { ordersRouter, paymentsRouter, paymentWebhook } from './routes/orders.js'
 import { supportRouter } from './routes/support.js'
+import { clearPublicCache } from './services/publicCache.js'
+const CATALOGUE_WRITES = /^\/api\/v1\/(admin|checkout|orders|payments)(\/|$)/
 export function createApp() {
   const app = express()
   app.set('trust proxy', 1)
@@ -38,8 +40,19 @@ export function createApp() {
     cors({
       origin: env.CORS_ORIGINS.split(',').map((origin) => origin.trim()),
       credentials: true,
+      // Signed-in requests carry an Authorization header, so the browser asks first (preflight). Chrome keeps the answer at most 2 hours.
+      maxAge: 7200,
     }),
   )
+  // Writes that can change what shoppers see (catalogue, stock, prices) drop the cached catalogue.
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS' && CATALOGUE_WRITES.test(req.path)) {
+      res.on('finish', () => {
+        if (res.statusCode < 400) clearPublicCache()
+      })
+    }
+    next()
+  })
   app.use(cookieParser())
   app.post(
     '/api/v1/payments/webhook',
@@ -75,12 +88,20 @@ export function createApp() {
   const strict = (max) => limit(max)
   const authFailures = limit(20, {
     skipSuccessfulRequests: true,
-    skip: (req) => req.path === '/refresh' || req.path === '/logout' || req.path === '/forgot-password' || req.path === '/verify-reset-code',
+    skip: (req) =>
+      req.path === '/refresh' ||
+      req.path === '/logout' ||
+      req.path === '/forgot-password' ||
+      req.path === '/verify-reset-code' ||
+      req.path === '/resend-verification' ||
+      req.path === '/verify-email',
   })
   api.use('/auth/refresh', limit(300))
   api.use('/auth/forgot-password', strict(8))
   // Codes also lock after 5 wrong tries each; this caps guessing across many requested codes.
   api.use('/auth/verify-reset-code', strict(30))
+  api.use('/auth/resend-verification', strict(8))
+  api.use('/auth/verify-email', strict(30))
   api.use('/auth', authFailures, authRouter)
   api.use('/checkout', strict(60))
   api.use('/geo', limit(300), geoRouter)

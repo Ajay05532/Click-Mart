@@ -4,7 +4,9 @@ import { Container } from '../components/layout/Container.tsx'
 import { ProductCard } from '../components/product/ProductCard.tsx'
 import { Breadcrumbs } from '../components/ui/Breadcrumbs.tsx'
 import { EmptyState } from '../components/ui/Primitives.tsx'
+import { useAuth } from '../context/AuthContext.tsx'
 import { useCart } from '../context/CartContext.tsx'
+import { useNotice } from '../context/NoticeContext.tsx'
 import { useWishlist } from '../context/WishlistContext.tsx'
 import { featuredPack, useProducts, useProductsByIds } from '../lib/catalog.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
@@ -13,11 +15,25 @@ export function WishlistPage() {
   useDocumentTitle('Wishlist', { noindex: true })
   const wishlist = useWishlist()
   const { addItem } = useCart()
+  const { user } = useAuth()
+  const notify = useNotice()
   const savedQuery = useProductsByIds(wishlist.ids)
   const saved = (savedQuery.data ?? []).filter((product) => wishlist.ids.includes(product.id))
   const best = useProducts({ bestseller: true, pageSize: 8 })
   const suggestions = (best.data?.items ?? []).filter((p) => !wishlist.ids.includes(p.id)).slice(0, 4)
-  const addAll = () => saved.filter((p) => p.inStock).forEach((p) => addItem(featuredPack(p).variantId, 1, p.name))
+  const addAll = () => {
+    const ready = saved.filter((p) => p.inStock)
+    ready.forEach((p) => addItem(featuredPack(p).variantId, 1, p.name, true))
+    const skipped = saved.length - ready.length
+    notify({
+      title: `${ready.length} ${ready.length === 1 ? 'item' : 'items'} added to cart`,
+      text: skipped ? `${skipped} sold-out ${skipped === 1 ? 'item was' : 'items were'} left in your wishlist.` : undefined,
+      actions: [
+        { label: 'View cart', to: '/cart' },
+        { label: 'Checkout', to: '/checkout', primary: true },
+      ],
+    })
+  }
 
   return (
     <div className="bg-canvas">
@@ -39,6 +55,17 @@ export function WishlistPage() {
             </div>
           )}
         </div>
+
+        {!user && wishlist.ids.length > 0 && (
+          <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-brand/15 bg-brand-soft/70 p-4 sm:flex-row sm:items-center">
+            <p className="min-w-0 flex-1 text-sm text-ink-soft">
+              <span className="font-extrabold text-brand">Saved on this device only.</span> Log in to keep your wishlist on your phone and computer.
+            </p>
+            <Link to="/login" state={{ from: '/wishlist' }} className="btn btn-brand btn-sm shrink-0">
+              Log in
+            </Link>
+          </div>
+        )}
 
         {wishlist.ids.length === 0 ? (
           <div className="mt-10">

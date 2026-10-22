@@ -11,7 +11,7 @@ import { ProductMedia } from './ProductMedia.tsx'
 import { ShareButton } from './ShareButton.tsx'
 
 export function ProductCard({ product, pack: chosen }: { product: Product; pack?: Pack }) {
-  const { addItem, updateQty, items } = useCart()
+  const { addItem, updateQty, confirmRemove, items } = useCart()
   const wishlist = useWishlist()
   const saved = wishlist.has(product.id)
   const pack = chosen ?? featuredPack(product)
@@ -54,7 +54,7 @@ export function ProductCard({ product, pack: chosen }: { product: Product; pack?
       <div className="absolute top-3 right-3 flex flex-col gap-2">
         <button
           type="button"
-          onClick={() => wishlist.toggle(product.id)}
+          onClick={() => wishlist.toggle(product.id, product.name)}
           aria-pressed={saved}
           aria-label={saved ? `Remove ${product.name} from wishlist` : `Save ${product.name}`}
           className={`grid size-9 place-items-center rounded-full bg-white/95 shadow-md backdrop-blur transition duration-200 hover:scale-110 ${
@@ -103,7 +103,7 @@ export function ProductCard({ product, pack: chosen }: { product: Product; pack?
             <div className="motion-pop flex h-10 shrink-0 items-center rounded-full bg-brand sm:h-11 text-white shadow-[0_8px_20px_-10px_rgb(18_58_134/0.8)]" role="group" aria-label={`${title} in cart`}>
               <button
                 type="button"
-                onClick={() => updateQty(pack.variantId, inCart - 1)}
+                onClick={() => (inCart <= 1 ? confirmRemove(pack.variantId, title) : updateQty(pack.variantId, inCart - 1))}
                 aria-label={inCart === 1 ? `Remove ${title} from cart` : `One less ${title}`}
                 className="grid size-10 place-items-center rounded-full text-lg font-bold transition hover:bg-white/15 active:scale-90 sm:size-11"
               >

@@ -27,8 +27,11 @@ export async function createAccount(input) {
         email: input.email,
         passwordHash: input.passwordHash,
         role: input.role,
+        // Self-registered customers start unverified; every other caller (admin invite, staff creation) keeps
+        // the column default (verified now), since the admin already trusts that email.
+        ...(input.emailVerifiedAt === undefined ? {} : { emailVerifiedAt: input.emailVerifiedAt }),
       })
-      .select('id, email, passwordHash, role, isBlocked, lastLoginAt, createdAt')
+      .select('id, email, passwordHash, role, isBlocked, lastLoginAt, emailVerifiedAt, createdAt')
       .single(),
   )
   await exec(

@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 
 export const SITE_NAME = 'ClickMart'
 export const DEFAULT_DESCRIPTION = 'Premium dry fruits, nuts and seeds from ClickMart, packed fresh in Patna and delivered across India. Pay by UPI, card, net banking or cash on delivery.'
-const DEFAULT_IMAGE = '/images/seeds.jpg'
+const DEFAULT_IMAGE = '/logo.png'
 
 /** The public address of the site. Set VITE_SITE_URL once you have a domain; until then the current address is used. */
 export const siteUrl = () => ((import.meta.env.VITE_SITE_URL as string | undefined) || window.location.origin).replace(/\/$/, '')

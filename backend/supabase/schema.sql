@@ -207,11 +207,16 @@ CREATE TABLE IF NOT EXISTS account."Login" (
     "role" "Role" NOT NULL DEFAULT 'CUSTOMER',
     "isBlocked" BOOLEAN NOT NULL DEFAULT false,
     "lastLoginAt" TIMESTAMPTZ(3),
+    "emailVerifiedAt" TIMESTAMPTZ(3) DEFAULT CURRENT_TIMESTAMP,
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Login_pkey" PRIMARY KEY ("id")
 );
+-- The default marks older rows and staff/admin rows as verified; sign-up inserts NULL, so the column must allow it.
+ALTER TABLE account."Login" ADD COLUMN IF NOT EXISTS "emailVerifiedAt" TIMESTAMPTZ(3) DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE account."Login" ALTER COLUMN "emailVerifiedAt" DROP NOT NULL;
+COMMENT ON COLUMN account."Login"."emailVerifiedAt" IS 'NULL until a self-registered customer confirms the emailed code. Staff/admin rows and older rows default to verified.';
 
 -- Shopper details. One row per buyer. Addresses stay on userId, which is this login id.
 CREATE TABLE IF NOT EXISTS account."Customer" (
@@ -1468,12 +1473,15 @@ END $$;
 
 -- One row per person for the API to read: login fields plus the name and phone
 -- from whichever profile matches the role. Writes go to Login and the profile table.
+-- Column order matches migrations/2026-10-22-email-verify.sql (emailVerifiedAt last): CREATE OR REPLACE VIEW
+-- cannot reorder or rename existing view columns (error 42P16), only append new ones at the end.
 CREATE OR REPLACE VIEW account."Person" WITH (security_invoker = true) AS
 SELECT l."id", l."email", l."passwordHash", l."role", l."isBlocked", l."lastLoginAt",
        l."createdAt", l."updatedAt",
        COALESCE(c."name", s."name", a."name", '') AS "name",
        COALESCE(c."phone", s."phone", a."phone") AS "phone",
-       COALESCE(c."avatarUrl", s."avatarUrl", a."avatarUrl") AS "avatarUrl"
+       COALESCE(c."avatarUrl", s."avatarUrl", a."avatarUrl") AS "avatarUrl",
+       l."emailVerifiedAt"
 FROM account."Login" l
 LEFT JOIN account."Customer" c ON c."loginId" = l."id" AND l."role" = 'CUSTOMER'
 LEFT JOIN account."Staff" s ON s."loginId" = l."id" AND l."role" = 'STAFF'

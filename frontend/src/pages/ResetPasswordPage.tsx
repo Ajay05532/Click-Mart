@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { AuthLink, AuthShell, FormError, FormField, PasswordInput, PasswordStrength } from '../components/auth/AuthShell.tsx'
+import { AuthLink, AuthShell, FormError, FormField, IconField, PasswordInput, PasswordStrength } from '../components/auth/AuthShell.tsx'
+import { LockIcon } from '../components/icons.tsx'
 import { api, errorMessage } from '../lib/api.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
@@ -54,11 +55,15 @@ export function ResetPasswordPage() {
       ) : (
         <form onSubmit={submit} noValidate className="space-y-5">
           <FormField label="New password">
-            <PasswordInput value={password} onChange={(e) => { setPassword(e.target.value); setError('') }} autoComplete="new-password" placeholder="At least 8 characters" autoFocus />
+            <IconField icon={<LockIcon className="size-[18px]" />}>
+              <PasswordInput value={password} onChange={(e) => { setPassword(e.target.value); setError('') }} autoComplete="new-password" placeholder="At least 8 characters" autoFocus />
+            </IconField>
             <PasswordStrength password={password} />
           </FormField>
           <FormField label="Confirm new password">
-            <PasswordInput value={confirm} onChange={(e) => { setConfirm(e.target.value); setError('') }} autoComplete="new-password" />
+            <IconField icon={<LockIcon className="size-[18px]" />}>
+              <PasswordInput value={confirm} onChange={(e) => { setConfirm(e.target.value); setError('') }} autoComplete="new-password" />
+            </IconField>
           </FormField>
           <FormError message={error} />
           <button type="submit" disabled={busy} className="btn btn-accent btn-lg w-full">

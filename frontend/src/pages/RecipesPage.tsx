@@ -5,6 +5,7 @@ import { Container } from '../components/layout/Container.tsx'
 import { ProductMedia } from '../components/product/ProductMedia.tsx'
 import { PageHero } from '../components/ui/PageHero.tsx'
 import { useCart } from '../context/CartContext.tsx'
+import { useNotice } from '../context/NoticeContext.tsx'
 import { featuredPack, productPath, useProducts } from '../lib/catalog.ts'
 import { formatPrice } from '../lib/money.ts'
 import { fromPrice, productsMatching } from '../lib/pantry.ts'
@@ -170,14 +171,27 @@ const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-')
 
 function RecipeCard({ recipe, pouches, photo }: { recipe: Recipe; pouches: Product[]; photo: string }) {
   const { addItem } = useCart()
+  const notify = useNotice()
   const [open, setOpen] = useState(false)
   const [added, setAdded] = useState(false)
   const buyable = pouches.filter((product) => product.inStock)
   const addAll = () => {
+    let count = 0
     for (const product of buyable) {
       const pack = product.packs.find((item) => item.size === featuredPack(product).size && (item.stock ?? 0) > 0) ?? product.packs.find((item) => (item.stock ?? 0) > 0)
-      if (pack) addItem(pack.variantId, 1, product.name)
+      if (pack) {
+        addItem(pack.variantId, 1, product.name, true)
+        count++
+      }
     }
+    notify({
+      title: `Ingredients for ${recipe.title} added`,
+      text: `${count} ${count === 1 ? 'item' : 'items'} added to your cart.`,
+      actions: [
+        { label: 'View cart', to: '/cart' },
+        { label: 'Checkout', to: '/checkout', primary: true },
+      ],
+    })
     setAdded(true)
     window.setTimeout(() => setAdded(false), 2000)
   }

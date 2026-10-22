@@ -45,6 +45,12 @@ if (isProd && env.PAYMENT_PROVIDER === 'razorpay' && (!env.RAZORPAY_KEY_ID || !e
   console.error('PAYMENT_PROVIDER=razorpay requires RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET')
   process.exit(1)
 }
+if (isProd && env.PAYMENT_PROVIDER === 'razorpay' && env.PAYMENT_WEBHOOK_SECRET === 'dev-webhook-secret') {
+  console.warn('PAYMENT_WEBHOOK_SECRET is not set: Razorpay webhooks will be refused. Set it to the secret of the webhook in the Razorpay dashboard.')
+}
+if (isProd && env.PAYMENT_PROVIDER === 'razorpay' && env.RAZORPAY_KEY_ID?.startsWith('rzp_test_')) {
+  console.warn('RAZORPAY_KEY_ID is a test key: checkout opens Razorpay test mode and no real money moves.')
+}
 if (isProd && (env.JWT_ACCESS_SECRET.startsWith('dev-') || /localhost|127\.0\.0\.1/.test(env.SUPABASE_URL))) {
   console.error('Refusing to start in production with development secrets or a local database')
   process.exit(1)

@@ -131,7 +131,7 @@ const productLinks = (items) => `<ul>${items.map((item) => `<li><a href="/produc
  */
 export async function metaFor(path, query, site, fetchJson = getJson) {
   const clean = path.replace(/\/+$/, '') || '/'
-  const base = { title: undefined, description: DEFAULT_DESCRIPTION, canonical: `${site}${clean === '/' ? '' : clean}`, image: `${site}/images/seeds.jpg`, type: 'website', noindex: false, status: 200, jsonLd: [], body: '' }
+  const base = { title: undefined, description: DEFAULT_DESCRIPTION, canonical: `${site}${clean === '/' ? '' : clean}`, image: `${site}/logo.png`, type: 'website', noindex: false, status: 200, jsonLd: [], body: '' }
 
   if (PRIVATE_PREFIXES.some((prefix) => clean === prefix || clean.startsWith(`${prefix}/`))) return { ...base, noindex: true, canonical: null }
 

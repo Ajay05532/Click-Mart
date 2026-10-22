@@ -1,16 +1,23 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api, refreshSession, setAccessToken, setSessionLostHandler } from '../lib/api.ts'
+import { useNotice } from './NoticeContext.tsx'
 
 export type User = { id: string; name: string; email: string; phone: string | null; avatarUrl: string | null; role: 'CUSTOMER' | 'STAFF' | 'ADMIN' }
 
-type RegisterInput = { name: string; email: string; password: string; phone?: string }
+type RegisterInput = { name: string; email: string; phone?: string }
+export type RegisterResult = { requiresVerification: true; email: string; expiresInMinutes: number }
 
 type AuthContextValue = {
   user: User | null
   /** True until the first silent session check finishes, so pages do not flash "logged out". */
   loading: boolean
   login: (email: string, password: string) => Promise<User>
-  register: (input: RegisterInput) => Promise<User>
+  register: (input: RegisterInput) => Promise<RegisterResult>
+  /** Checks the emailed code. Returns a one-time token for choosing the password. */
+  verifyEmail: (email: string, code: string) => Promise<{ setupToken: string }>
+  /** Sets the first password after the email is confirmed, and signs in. */
+  completeSignup: (setupToken: string, password: string) => Promise<User>
+  resendVerification: (email: string) => Promise<{ expiresInMinutes: number }>
   logout: () => Promise<void>
   updateProfile: (patch: { name?: string; phone?: string | null; avatarUrl?: null }) => Promise<User>
   uploadAvatar: (file: File) => Promise<User>
@@ -24,10 +31,26 @@ type Session = { user: User; accessToken: string }
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  const notify = useNotice()
+  const signedIn = useRef(false)
+  useEffect(() => {
+    signedIn.current = !!user
+  }, [user])
 
   // Restore the session from the httpOnly refresh cookie.
   useEffect(() => {
-    setSessionLostHandler(() => setUser(null))
+    setSessionLostHandler(() => {
+      // Only say so when someone was actually signed in; guests hitting a private address are not "logged out".
+      if (signedIn.current) {
+        notify({
+          tone: 'warning',
+          title: 'Your session has ended',
+          text: 'For your security you were logged out. Log in again to continue.',
+          actions: [{ label: 'Log in', to: '/login', state: { from: `${window.location.pathname}${window.location.search}` }, primary: true }],
+        })
+      }
+      setUser(null)
+    })
     let cancelled = false
     ;(async () => {
       try {
@@ -47,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [notify])
 
   const start = useCallback((session: Session) => {
     setAccessToken(session.accessToken)
@@ -56,13 +79,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const login = useCallback(async (email: string, password: string) => start(await api<Session>('/auth/login', { body: { email, password } })), [start])
-  const register = useCallback(async (input: RegisterInput) => start(await api<Session>('/auth/register', { body: input })), [start])
+  const register = useCallback(async (input: RegisterInput) => api<RegisterResult>('/auth/register', { body: input }), [])
+  const verifyEmail = useCallback(async (email: string, code: string) => api<{ setupToken: string }>('/auth/verify-email', { body: { email, code } }), [])
+  const completeSignup = useCallback(
+    async (setupToken: string, password: string) => start(await api<Session>('/auth/complete-signup', { body: { token: setupToken, password } })),
+    [start],
+  )
+  const resendVerification = useCallback(async (email: string) => api<{ expiresInMinutes: number }>('/auth/resend-verification', { body: { email } }), [])
 
   const logout = useCallback(async () => {
     await api('/auth/logout', { method: 'POST' }).catch(() => undefined)
     setAccessToken(null)
+    signedIn.current = false
     setUser(null)
-  }, [])
+    notify({ tone: 'info', title: 'You have logged out', text: 'Your cart and wishlist stay on this device. See you soon!' })
+  }, [notify])
 
   const updateProfile = useCallback(async (patch: { name?: string; phone?: string | null; avatarUrl?: null }) => {
     const result = await api<{ user: User }>('/me', { method: 'PATCH', body: patch })
@@ -85,7 +116,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (email) start(await api<Session>('/auth/login', { body: { email, password: newPassword } }))
   }, [start, user?.email])
 
-  const value = useMemo(() => ({ user, loading, login, register, logout, updateProfile, uploadAvatar, changePassword }), [user, loading, login, register, logout, updateProfile, uploadAvatar, changePassword])
+  const value = useMemo(
+    () => ({ user, loading, login, register, verifyEmail, completeSignup, resendVerification, logout, updateProfile, uploadAvatar, changePassword }),
+    [user, loading, login, register, verifyEmail, completeSignup, resendVerification, logout, updateProfile, uploadAvatar, changePassword],
+  )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 

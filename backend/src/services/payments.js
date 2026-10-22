@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { env } from '../config/env.js'
+import { env, isProd } from '../config/env.js'
 import { unauthorized } from '../utils/errors.js'
 const hmac = (secret, data) => createHmac('sha256', secret).update(data).digest('hex')
 const safeEqual = (a, b) => {
@@ -9,6 +9,8 @@ const safeEqual = (a, b) => {
   return timingSafeEqual(left, right)
 }
 const MOCK_SECRET = `${env.JWT_REFRESH_SECRET}:mock-gateway`
+/** The built-in default is public, so in production it would let anyone forge "payment captured" calls. */
+export const webhookSecretSet = () => !isProd || (env.PAYMENT_WEBHOOK_SECRET !== 'dev-webhook-secret' && env.PAYMENT_WEBHOOK_SECRET.length >= 12)
 const razorpayAuth = () => {
   if (!env.RAZORPAY_KEY_ID || !env.RAZORPAY_KEY_SECRET) throw new Error('Razorpay keys are missing')
   return `Basic ${Buffer.from(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`).toString('base64')}`
@@ -71,6 +73,12 @@ export const paymentProvider = {
     }
     if (payment.status !== 'captured') throw unauthorized('Payment was not completed')
   },
+  /** A payment Razorpay already holds for this order (captured or authorized), so a closed window is not treated as unpaid. */
+  async successfulAttempt(providerOrderId) {
+    if (env.PAYMENT_PROVIDER !== 'razorpay' || !/^order_[A-Za-z0-9]+$/.test(providerOrderId)) return null
+    const list = await razorpay(`/orders/${providerOrderId}/payments`)
+    return (list.items ?? []).find((payment) => payment.status === 'captured' || payment.status === 'authorized')?.id ?? null
+  },
   mockGatewayPay(providerOrderId) {
     const providerPaymentId = `mock_pay_${randomBytes(8).toString('hex')}`
     return {
@@ -79,9 +87,8 @@ export const paymentProvider = {
     }
   },
   verifyWebhook(rawBody, signature) {
-    if (!signature) return false
-    const secret = env.PAYMENT_PROVIDER === 'razorpay' ? env.PAYMENT_WEBHOOK_SECRET : env.PAYMENT_WEBHOOK_SECRET
-    return safeEqual(hmac(secret, rawBody), signature)
+    if (!signature || !webhookSecretSet()) return false
+    return safeEqual(hmac(env.PAYMENT_WEBHOOK_SECRET, rawBody), signature)
   },
   signWebhookBody(body) {
     return hmac(env.PAYMENT_WEBHOOK_SECRET, body)

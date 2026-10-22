@@ -134,6 +134,9 @@ export async function markPaid(providerOrderId, providerPaymentId, raw) {
     p_raw: raw ?? null,
   })
   if (result.changed) void sendOrderConfirmation(result.orderId)
+  // The money arrived after the order was cancelled (window expired, or the shopper gave up and paid later):
+  // send it straight back. If Razorpay refuses, the order stays "Paid" and cancelled, and the admin can refund it.
+  if (result.needsRefund) await refundOrder(result.orderId).catch((error) => console.error('late payment refund failed', result.orderId, error))
   return result
 }
 export const failPayment = (orderId, note = 'Payment failed') =>

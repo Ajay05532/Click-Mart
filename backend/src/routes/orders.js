@@ -178,9 +178,16 @@ paymentsRouter.post('/fail', async (req, res) => {
       reason: z.string().max(200).optional(),
     })
     .parse(req.body)
-  const payment = await maybe(from('Payment').select('orderId').eq('providerOrderId', data.providerOrderId).limit(1).maybeSingle())
+  const payment = await maybe(from('Payment').select('orderId, amount').eq('providerOrderId', data.providerOrderId).limit(1).maybeSingle())
   if (!payment) throw notFound('Payment')
-  await failPayment(payment.orderId, data.reason ?? 'Payment failed')
+  // The window can close while a UPI payment is still being approved on the phone. If Razorpay has the money, keep the order.
+  const paidId = await paymentProvider.successfulAttempt(data.providerOrderId).catch(() => null)
+  if (paidId) {
+    await paymentProvider.assertCaptured(data.providerOrderId, paidId, payment.amount)
+    await markPaid(data.providerOrderId, paidId)
+  } else {
+    await failPayment(payment.orderId, data.reason ?? 'Payment failed')
+  }
   res.json({
     order: serializeOrder(await loadOrder(payment.orderId)),
   })
@@ -242,11 +249,20 @@ export async function paymentWebhook(req, res) {
     let handled = false
     if (entity) {
       if (event.event === 'payment.captured' || event.event === 'order.paid') {
+        const attempt = await maybe(from('Payment').select('amount').eq('providerOrderId', entity.order_id).limit(1).maybeSingle())
+        if (!attempt) throw notFound('Payment')
+        if (entity.amount !== attempt.amount * 100 || entity.currency !== 'INR') throw unauthorized('Paid amount does not match this order')
         await markPaid(entity.order_id, entity.id, event)
         handled = true
       } else if (event.event === 'payment.failed') {
-        const payment = await maybe(from('Payment').select('orderId').eq('providerOrderId', entity.order_id).limit(1).maybeSingle())
-        if (payment) await failPayment(payment.orderId, 'Payment failed')
+        // Razorpay keeps its window open with "Retry", so one failed attempt must not cancel the order.
+        // Closing the window releases it (POST /payments/fail); otherwise the 30-minute sweep does.
+        await exec(
+          from('Payment')
+            .update({ failureReason: entity.error_description?.slice(0, 200) ?? 'Payment attempt failed' })
+            .eq('providerOrderId', entity.order_id)
+            .eq('status', 'PENDING'),
+        )
         handled = true
       }
     }

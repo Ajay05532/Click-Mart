@@ -224,7 +224,7 @@ function DealCard({ product, pack, off, save, topPercent }: { product: Product; 
       <div className="relative flex min-w-0 flex-1 flex-col p-4">
         <button
           type="button"
-          onClick={() => wishlist.toggle(product.id)}
+          onClick={() => wishlist.toggle(product.id, product.name)}
           aria-pressed={saved}
           aria-label={saved ? `Remove ${product.name} from wishlist` : `Save ${product.name}`}
           className={`absolute top-3 right-3 transition hover:scale-110 ${saved ? 'text-rose-500' : 'text-muted hover:text-rose-500'}`}

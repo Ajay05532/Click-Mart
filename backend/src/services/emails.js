@@ -118,6 +118,28 @@ export async function sendPasswordResetCode(user, code, minutes) {
   return sendMail(user.email, `${code} is your ClickMart password reset code`, text, { html })
 }
 
+/** The 6-digit code confirming a new account's email, sent right after registration. */
+export function renderVerifyCode(user, code, minutes, contact = null) {
+  const heading = 'Confirm your email'
+  const html = layout({
+    preheader: `${code} confirms your ClickMart account. It expires in ${minutes} minutes.`,
+    heading,
+    contact,
+    body:
+      para(`Hi ${esc(firstName(user.name))}, welcome to ClickMart! Enter this code to confirm this email is yours and finish creating your account:`) +
+      `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 18px"><tr><td style="padding:16px 26px;background:${CANVAS};border:1px solid ${LINE};border-radius:14px;font:800 34px/1 'SFMono-Regular',Menlo,Consolas,monospace;letter-spacing:10px;color:${INK}">${esc(code)}</td></tr></table>` +
+      para(`The code expires in <strong>${minutes} minutes</strong> and stops working after 5 wrong tries.`) +
+      small("Never share this code. If you did not try to create a ClickMart account, you can ignore this email — nobody can sign in without confirming it."),
+  })
+  const text = `${heading}\n\nHi ${firstName(user.name)}, your ClickMart email confirmation code is: ${code}\n\nIt expires in ${minutes} minutes and stops working after 5 wrong tries.\nIf you did not try to create a ClickMart account, ignore this email.${textFooter(contact)}`
+  return { html, text }
+}
+
+export async function sendVerifyCode(user, code, minutes) {
+  const { html, text } = renderVerifyCode(user, code, minutes, await contactDetails())
+  return sendMail(user.email, `${code} confirms your ClickMart account`, text, { html })
+}
+
 export const sendPasswordChanged = (user) =>
   noticeEmail({
     to: user.email,
