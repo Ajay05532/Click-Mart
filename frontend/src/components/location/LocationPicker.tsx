@@ -109,7 +109,8 @@ export default function LocationPicker({ current, onSave, onSaveAddress, onClear
     if (hasSpot && current!.pin) {
       setResolve({
         state: 'found',
-        place: { pin: current!.pin, city: current!.city, state: current!.state, area: current!.area, label: current!.label ?? '', lat: current!.lat!, lng: current!.lng! },
+        // Already the confirmed delivery address; re-checked against today's Settings only once the map settles.
+        place: { pin: current!.pin, city: current!.city, state: current!.state, area: current!.area, label: current!.label ?? '', lat: current!.lat!, lng: current!.lng!, deliverable: true },
       })
     }
 
@@ -236,7 +237,7 @@ export default function LocationPicker({ current, onSave, onSaveAddress, onClear
 
   const confirm = (event?: FormEvent) => {
     event?.preventDefault()
-    if (resolve.state !== 'found' || !resolve.place.pin) return
+    if (resolve.state !== 'found' || !resolve.place.pin || !resolve.place.deliverable) return
     const location = placeToLocation({ ...resolve.place, pin: resolve.place.pin })
     if (purpose === 'address') {
       setDetails((currentDetails) => ({
@@ -253,7 +254,7 @@ export default function LocationPicker({ current, onSave, onSaveAddress, onClear
 
   const saveAddress = async (event: FormEvent) => {
     event.preventDefault()
-    if (resolve.state !== 'found' || !resolve.place.pin) return
+    if (resolve.state !== 'found' || !resolve.place.pin || !resolve.place.deliverable) return
     if (details.name.trim().length < 2) return setDetailError('Enter the full name for this address')
     if (!/^[6-9]\d{9}$/.test(details.phone)) return setDetailError('Enter a valid 10-digit mobile number')
     if (details.line.trim().length < 8) return setDetailError('Add the house, flat or building (at least 8 characters)')
@@ -369,7 +370,18 @@ export default function LocationPicker({ current, onSave, onSaveAddress, onClear
 
             <form onSubmit={confirm} className="absolute right-0 bottom-0 left-0 z-20 rounded-t-2xl bg-white px-3 pt-2.5 pb-3 shadow-[0_-8px_24px_rgb(15_23_42/0.12)]">
               {resolve.state === 'found' && place ? (
-                <p className="truncate text-sm font-extrabold text-ink">{heading || `PIN ${place.pin}`} <span className="font-semibold text-muted">· {place.pin}</span></p>
+                <>
+                  <p className="truncate text-sm font-extrabold text-ink">{heading || `PIN ${place.pin}`} <span className="font-semibold text-muted">· {place.pin}</span></p>
+                  {place.deliverable ? (
+                    <p className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-success">
+                      <CheckIcon className="size-3.5" /> We deliver to this address
+                    </p>
+                  ) : (
+                    <p className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-rose-600">
+                      <CloseIcon className="size-3.5" /> Sorry, we currently don't deliver to this area
+                    </p>
+                  )}
+                </>
               ) : resolve.state === 'loading' ? (
                 <p className="flex items-center gap-2 text-xs text-muted">
                   <span className="size-3.5 animate-spin rounded-full border-2 border-brand border-t-transparent" /> Finding this address…
@@ -379,7 +391,7 @@ export default function LocationPicker({ current, onSave, onSaveAddress, onClear
               ) : (
                 <p className="text-xs text-muted">Search, or drag the map so the pin sits on the doorstep.</p>
               )}
-              <button type="submit" disabled={resolve.state !== 'found'} className="btn btn-accent mt-2 h-9 w-full text-sm disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
+              <button type="submit" disabled={resolve.state !== 'found' || !place?.deliverable} className="btn btn-accent mt-2 h-9 w-full text-sm disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
                 <CheckIcon className="size-4" /> {purpose === 'address' ? 'Confirm and add details' : 'Confirm location'}
               </button>
               {purpose === 'delivery' && current && onClear && (

@@ -19,6 +19,9 @@ type Settings = {
   codEnabled: boolean
   codMaxOrder: number
   lowStockDefault: number
+  nonServiceablePincodes: string[]
+  nonServiceableStates: string[]
+  pickupPincode: string
 }
 type PublicSettings = { paymentProvider: 'mock' | 'razorpay'; paymentTestMode: boolean }
 type NumberKey = 'freeShippingThreshold' | 'shippingFee' | 'codMaxOrder' | 'lowStockDefault'
@@ -40,11 +43,17 @@ const toForm = (s: Settings): Form => ({ ...s, freeShippingThreshold: String(s.f
 const whole = (value: string) => /^\d+$/.test(value.trim())
 
 export function SettingsPage() {
-  const query = useQuery({ queryKey: ['settings'], queryFn: () => api<{ settings: Settings }>('/admin/settings').then((r) => r.settings) })
+  const query = useQuery({ queryKey: ['settings'], queryFn: () => api<{ settings: Settings; nimbuspostEnabled: boolean }>('/admin/settings') })
   return (
     <AdminOnly>
       <PageHeader title="Settings" subtitle="How your store presents itself, charges for delivery and takes payment." />
-      {query.isLoading ? <PageLoader /> : query.error || !query.data ? <Card><ErrorState error={query.error} retry={() => void query.refetch()} /></Card> : <SettingsForm key={JSON.stringify(query.data)} initial={query.data} />}
+      {query.isLoading ? (
+        <PageLoader />
+      ) : query.error || !query.data ? (
+        <Card><ErrorState error={query.error} retry={() => void query.refetch()} /></Card>
+      ) : (
+        <SettingsForm key={JSON.stringify(query.data)} initial={query.data.settings} nimbuspostEnabled={query.data.nimbuspostEnabled} />
+      )}
     </AdminOnly>
   )
 }
@@ -66,7 +75,59 @@ function Section({ icon, title, text, children }: { icon: string; title: string;
   )
 }
 
-function SettingsForm({ initial }: { initial: Settings }) {
+/** A row of removable chips plus a text box that adds one on Enter or comma. */
+function TagField({ label, values, onChange, placeholder, normalize, options }: { label: string; values: string[]; onChange: (values: string[]) => void; placeholder: string; normalize: (raw: string) => string | null; options?: string[] }) {
+  const [draft, setDraft] = useState('')
+  const add = (raw: string) => {
+    const value = normalize(raw)
+    if (value && !values.includes(value)) onChange([...values, value])
+    setDraft('')
+  }
+  return (
+    <div>
+      <span className="text-[13px] font-bold text-ink-soft">{label}</span>
+      {values.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {values.map((value) => (
+            <span key={value} className="flex items-center gap-1.5 rounded-full bg-rose-50 py-1 pr-1.5 pl-3 text-xs font-bold text-rose-700">
+              {value}
+              <button type="button" onClick={() => onChange(values.filter((v) => v !== value))} aria-label={`Remove ${value}`} className="grid size-4 place-items-center rounded-full hover:bg-rose-100">✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        list={options ? `${label}-options` : undefined}
+        value={draft}
+        onChange={(e) => (e.target.value.includes(',') ? add(e.target.value) : setDraft(e.target.value))}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault()
+            add(draft)
+          }
+        }}
+        onBlur={() => draft && add(draft)}
+        placeholder={placeholder}
+        className="field mt-1.5"
+      />
+      {options && (
+        <datalist id={`${label}-options`}>
+          {options.map((option) => (
+            <option key={option} value={option} />
+          ))}
+        </datalist>
+      )}
+    </div>
+  )
+}
+const PinTagField = ({ label, values, onChange }: { label: string; values: string[]; onChange: (values: string[]) => void }) => (
+  <TagField label={label} values={values} onChange={onChange} placeholder="110022, then Enter" normalize={(raw) => (/^\d{6}$/.test(raw.trim()) ? raw.trim() : null)} />
+)
+const StateTagField = ({ label, values, onChange }: { label: string; values: string[]; onChange: (values: string[]) => void }) => (
+  <TagField label={label} values={values} onChange={onChange} placeholder="Type a state, then Enter" normalize={(raw) => raw.trim().replace(/,$/, '') || null} options={STATES} />
+)
+
+function SettingsForm({ initial, nimbuspostEnabled }: { initial: Settings; nimbuspostEnabled: boolean }) {
   const start = toForm(initial)
   const [f, setF] = useState<Form>(start)
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setF((current) => ({ ...current, [key]: value }))
@@ -77,6 +138,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
   if (!EMAIL.test(f.supportEmail.trim())) errors.supportEmail = 'Enter a valid email'
   if (f.supportPhone.replace(/\D/g, '').length < 10) errors.supportPhone = 'Enter a full phone number'
   if (f.gstin && !GSTIN.test(f.gstin)) errors.gstin = 'A GSTIN is 15 characters, like 10ABCDE1234F1Z5'
+  if (f.pickupPincode && !/^\d{6}$/.test(f.pickupPincode)) errors.pickupPincode = 'Enter a 6-digit PIN code, or leave it blank'
   for (const key of ['freeShippingThreshold', 'shippingFee', 'codMaxOrder', 'lowStockDefault'] as const) if (!whole(f[key])) errors[key] = 'Whole rupees, 0 or more'
   const invalid = Object.keys(errors).length > 0
   const dirty = JSON.stringify(f) !== JSON.stringify(start)
@@ -153,6 +215,28 @@ function SettingsForm({ initial }: { initial: Settings }) {
               {free === 0 ? 'Every order ships free.' : fee === 0 ? 'Every order ships free.' : <>Orders under <b>{inr(free)}</b> pay <b>{inr(fee)}</b> for delivery. <b>{inr(free)}</b> and above ship free.</>}
             </p>
           )}
+          <div className="mt-5 border-t border-line pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-bold">Pincode serviceability</p>
+              <Badge tone={nimbuspostEnabled ? 'green' : 'gray'}>{nimbuspostEnabled ? 'NimbusPost connected' : 'NimbusPost not connected'}</Badge>
+            </div>
+            <p className="mt-1 text-xs text-muted">
+              {nimbuspostEnabled
+                ? 'When a shopper sets their delivery PIN on the home page, we ask NimbusPost whether a courier reaches it from this PIN.'
+                : 'Add NIMBUSPOST_API_KEY and NIMBUSPOST_API_SECRET on the server to check live courier coverage. Until then, only the block list below applies.'}
+            </p>
+            <Field label="Pickup PIN code" error={errors.pickupPincode} hint="Where NimbusPost collects your orders from" className="mt-3 max-w-56">
+              <Input value={f.pickupPincode} inputMode="numeric" maxLength={6} onChange={(e) => set('pickupPincode', e.target.value.replace(/\D/g, ''))} placeholder="804453" aria-invalid={!!errors.pickupPincode} />
+            </Field>
+          </div>
+          <div className="mt-5 border-t border-line pt-4">
+            <p className="text-sm font-bold">Areas we don't deliver to</p>
+            <p className="mt-1 text-xs text-muted">Optional. Blocked here regardless of what NimbusPost says — shown when a shopper sets their delivery PIN on the home page.</p>
+            <div className="mt-3 grid gap-4 sm:grid-cols-2">
+              <PinTagField label="Specific PIN codes" values={f.nonServiceablePincodes} onChange={(v) => set('nonServiceablePincodes', v)} />
+              <StateTagField label="Whole states" values={f.nonServiceableStates} onChange={(v) => set('nonServiceableStates', v)} />
+            </div>
+          </div>
         </Section>
 
         <Section icon="M3 7h18v10H3zM3 11h18M7 15h3" title="Payments" text="Cash on delivery limits. Online payments are configured on the server.">

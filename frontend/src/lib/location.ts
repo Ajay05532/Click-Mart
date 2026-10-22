@@ -9,6 +9,8 @@ export type Place = {
   label: string
   lat: number
   lng: number
+  /** Whether ClickMart currently delivers here. Checked server-side against Settings -> Delivery. */
+  deliverable: boolean
 }
 
 export type DeliveryLocation = {

@@ -32,6 +32,10 @@ const schema = z.object({
   MAIL_FROM: z.string().default('ClickMart <onboarding@resend.dev>'),
   STORE_URL: z.string().default('http://localhost:5173'),
   ADMIN_URL: z.string().default('http://localhost:5175'),
+  // Courier aggregator. Both are needed to turn on pincode serviceability checks and shipment booking.
+  NIMBUSPOST_API_KEY: z.string().optional(),
+  NIMBUSPOST_API_SECRET: z.string().optional(),
+  NIMBUSPOST_BASE_URL: z.string().default('https://api-v2.nimbuspost.com/v2'),
 })
 const cleaned = Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== ''))
 const parsed = schema.safeParse(cleaned)

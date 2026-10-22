@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { from, exec, maybe } from '../database/db.js'
 import { badRequest } from '../utils/errors.js'
 import { actor, requireAuth } from '../middleware/auth.js'
+import { publicSettings } from '../services/publicCache.js'
+import { checkPincodeServiceability, nimbuspostEnabled } from '../services/nimbuspost.js'
 const columns = 'pin,city,state,area,label,lat,lng'
 const locationSchema = z.object({
   pin: z.string().regex(/^\d{6}$/, 'Enter a 6-digit PIN code'),
@@ -124,6 +126,30 @@ function toPlace(hit) {
     lng: Number(hit.lon),
   }
 }
+/**
+ * Whether we deliver to a resolved place. An admin block-list (Settings -> Delivery) always applies; on top
+ * of that, when NimbusPost is configured with a pickup PIN, its live courier serviceability decides the rest.
+ * Defaults to "yes, anywhere in India" (today's storefront copy) when neither check can run.
+ */
+async function withDeliverable(place) {
+  if (!place) return place
+  const settings = await publicSettings()
+  const blockedPins = settings.nonServiceablePincodes ?? []
+  const blockedStates = settings.nonServiceableStates ?? []
+  const pinBlocked = place.pin && blockedPins.includes(place.pin)
+  const stateBlocked = place.state && blockedStates.some((state) => state.trim().toLowerCase() === place.state.trim().toLowerCase())
+  if (pinBlocked || stateBlocked) return { ...place, deliverable: false }
+  if (place.pin && nimbuspostEnabled() && settings.pickupPincode) {
+    try {
+      const { deliverable } = await checkPincodeServiceability(settings.pickupPincode, place.pin)
+      return { ...place, deliverable }
+    } catch (error) {
+      console.error('NimbusPost serviceability check failed', error)
+      // A broken or rate-limited API call should not block a shopper from checking out: default to deliverable.
+    }
+  }
+  return { ...place, deliverable: true }
+}
 export const geoRouter = Router()
 geoRouter.get('/search', async (req, res) => {
   const q = z.string().trim().min(3).max(120).parse(req.query.q)
@@ -133,7 +159,7 @@ geoRouter.get('/search', async (req, res) => {
     limit: '6',
   })
   res.json({
-    items: hits.map(toPlace),
+    items: await Promise.all(hits.map(toPlace).map(withDeliverable)),
   })
 })
 geoRouter.get('/reverse', async (req, res) => {
@@ -153,11 +179,11 @@ geoRouter.get('/reverse', async (req, res) => {
       place: null,
     })
   res.json({
-    place: {
+    place: await withDeliverable({
       ...toPlace(hit),
       lat,
       lng,
-    },
+    }),
   })
 })
 geoRouter.get('/pin/:pin', async (req, res) => {
@@ -175,9 +201,9 @@ geoRouter.get('/pin/:pin', async (req, res) => {
       place: null,
     })
   res.json({
-    place: {
+    place: await withDeliverable({
       ...toPlace(hits[0]),
       pin,
-    },
+    }),
   })
 })

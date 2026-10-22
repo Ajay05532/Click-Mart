@@ -12,6 +12,13 @@ export const settingDefaults = {
   businessName: '',
   gstin: '',
   businessState: 'Bihar',
+  // Empty means "deliver everywhere in India" (the current storefront copy). Add a 6-digit PIN or a state
+  // name here to mark it as not serviceable; checked by GET /geo/pin, /geo/search and /geo/reverse.
+  nonServiceablePincodes: [],
+  nonServiceableStates: [],
+  // The 6-digit PIN NimbusPost ships from (your pickup warehouse). Required for live serviceability checks;
+  // without it, the checks above (an admin block-list) are the only ones that run.
+  pickupPincode: '',
 }
 /** Sample values an older schema.sql wrote. They are never real, so they fall back to the defaults above. */
 const OLD_SAMPLES = {

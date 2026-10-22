@@ -9,6 +9,7 @@ import { badRequest, conflict, notFound } from '../../utils/errors.js'
 import { changeStatus, loadOrder, refundOrder } from '../../services/orders.js'
 import { serializeOrder } from '../../utils/serializers.js'
 import { getSettings, saveSettings } from '../../services/settings.js'
+import { nimbuspostEnabled } from '../../services/nimbuspost.js'
 import { ORDER_SELECT } from '../../database/selects.js'
 import { actor, adminOnly } from '../../middleware/auth.js'
 import { renderInvoiceHtml } from '../../services/invoice.js'
@@ -226,6 +227,7 @@ adminOpsRouter.patch('/customers/:id', adminOnly, async (req, res) => {
 adminOpsRouter.get('/settings', adminOnly, async (_req, res) =>
   res.json({
     settings: await getSettings(),
+    nimbuspostEnabled: nimbuspostEnabled(),
   }),
 )
 adminOpsRouter.put('/settings', adminOnly, async (req, res) => {
@@ -247,6 +249,9 @@ adminOpsRouter.put('/settings', adminOnly, async (req, res) => {
         .toUpperCase()
         .regex(/^([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z])?$/, 'Enter a valid 15-character GSTIN, or leave it blank'),
       businessState: z.string().trim().max(60),
+      nonServiceablePincodes: z.array(z.string().trim().regex(/^\d{6}$/, '6-digit PIN codes only')).max(1000),
+      nonServiceableStates: z.array(z.string().trim().max(60)).max(60),
+      pickupPincode: z.string().trim().regex(/^(\d{6})?$/, 'Enter a 6-digit PIN code, or leave it blank'),
     })
     .partial()
     .parse(req.body)
