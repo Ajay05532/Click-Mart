@@ -9,7 +9,7 @@ import { badRequest, conflict, notFound } from '../../utils/errors.js'
 import { changeStatus, loadOrder, refundOrder } from '../../services/orders.js'
 import { serializeOrder } from '../../utils/serializers.js'
 import { getSettings, saveSettings } from '../../services/settings.js'
-import { nimbuspostEnabled } from '../../services/nimbuspost.js'
+import { getDeliveryRates, nimbuspostEnabled } from '../../services/nimbuspost.js'
 import { ORDER_SELECT } from '../../database/selects.js'
 import { actor, adminOnly } from '../../middleware/auth.js'
 import { renderInvoiceHtml } from '../../services/invoice.js'
@@ -76,6 +76,28 @@ adminOpsRouter.get('/orders/:id', async (req, res) => {
         : null,
     },
   })
+})
+// Dry fruit packs are light; stand in for a pack whose weight was never filled in on the product.
+const DEFAULT_ITEM_WEIGHT_GRAMS = 250
+adminOpsRouter.get('/orders/:id/delivery-rate', async (req, res) => {
+  const order = await maybe(from('Order').select('pin, total, paymentMethod, items:OrderItem(variantId, quantity)').eq('id', String(req.params.id)).maybeSingle())
+  if (!order) throw notFound('Order')
+  if (!nimbuspostEnabled()) throw badRequest('NimbusPost is not connected. Add NIMBUSPOST_API_KEY and NIMBUSPOST_API_SECRET on the server.')
+  const settings = await getSettings()
+  if (!settings.pickupPincode) throw badRequest('Set a pickup PIN code first, in Settings -> Delivery.')
+  const variantIds = [...new Set(order.items.map((item) => item.variantId).filter(Boolean))]
+  const weights = variantIds.length ? new Map((await rows(from('ProductVariant').select('id, weightGrams').in('id', variantIds))).map((v) => [v.id, v.weightGrams])) : new Map()
+  const weightGrams = order.items.reduce((sum, item) => sum + (weights.get(item.variantId) || DEFAULT_ITEM_WEIGHT_GRAMS) * item.quantity, 0)
+  const rates = await getDeliveryRates({
+    pickupPincode: settings.pickupPincode,
+    deliveryPincode: order.pin,
+    paymentMode: order.paymentMethod === 'COD' ? 'cod' : 'prepaid',
+    weightGrams: Math.max(weightGrams, DEFAULT_ITEM_WEIGHT_GRAMS),
+    orderValuePaise: Math.round(order.total * 100),
+  }).catch((error) => {
+    throw badRequest(`NimbusPost could not price this route: ${error.message}`)
+  })
+  res.json(rates)
 })
 adminOpsRouter.get('/payments/webhooks', adminOnly, async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status : null

@@ -8,6 +8,14 @@ import { dateTime, inr, label } from '../format.ts'
 import type { Order, OrderStatus, Paged } from '../types.ts'
 import { Badge, Button, Card, Drawer, EmptyState, ErrorState, Field, Input, Modal, PageHeader, PageLoader, Pagination, SearchBox, Table, Tabs, Td, Textarea, Thumb, errorMessage, useUi, type Tone } from '../ui.tsx'
 
+type DeliveryRate = {
+  deliverable: boolean
+  reason: string | null
+  weightGrams: number
+  couriers: { courierId: string; courierName: string; courierType: string; tatDays: number | null; ratePaise: number }[]
+  cheapest: { courierId: string; courierName: string; courierType: string; tatDays: number | null; ratePaise: number } | null
+}
+
 const statusTone: Record<OrderStatus, Tone> = { PLACED: 'gray', CONFIRMED: 'blue', PACKED: 'blue', SHIPPED: 'orange', OUT_FOR_DELIVERY: 'orange', DELIVERED: 'green', CANCELLED: 'red', RETURNED: 'red' }
 export const OrderStatusBadge = ({ status }: { status: OrderStatus }) => <Badge tone={statusTone[status]}>{label(status)}</Badge>
 const payTone = { PENDING: 'orange', PAID: 'green', FAILED: 'red', REFUNDED: 'gray' } as const
@@ -183,6 +191,8 @@ function OrderDrawer({ id, onClose }: { id: string; onClose: () => void }) {
             </section>
           </div>
 
+          <DeliveryRateCard orderId={id} />
+
           <section>
             <h3 className="text-xs font-bold tracking-wider text-muted uppercase">Timeline</h3>
             <ol className="mt-3 space-y-4 border-l-2 border-line pl-5">
@@ -200,6 +210,46 @@ function OrderDrawer({ id, onClose }: { id: string; onClose: () => void }) {
       )}
       {step && order && <StatusModal order={order} step={step} onClose={() => setStep(null)} />}
     </Drawer>
+  )
+}
+
+/** The real courier price for this order's actual weight and route, from NimbusPost. Loads once the drawer opens; cached server-side for an hour per route. */
+function DeliveryRateCard({ orderId }: { orderId: string }) {
+  const query = useQuery({
+    queryKey: ['order-delivery-rate', orderId],
+    queryFn: () => api<DeliveryRate>(`/admin/orders/${orderId}/delivery-rate`),
+    staleTime: 10 * 60_000,
+    retry: false,
+  })
+  return (
+    <section className="rounded-xl border border-line p-4 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-xs font-bold tracking-wider text-muted uppercase">Delivery charge (NimbusPost)</h3>
+        {query.data?.cheapest && <Badge tone="green">Cheapest {inr(Math.round(query.data.cheapest.ratePaise / 100))}</Badge>}
+      </div>
+      {query.isLoading ? (
+        <p className="mt-2 text-xs text-muted">Checking couriers for this route…</p>
+      ) : query.error ? (
+        <p className="mt-2 text-xs text-accent-dark">{errorMessage(query.error)}</p>
+      ) : !query.data?.deliverable ? (
+        <p className="mt-2 text-xs text-accent-dark">No courier currently serves this route{query.data?.reason ? ` (${query.data.reason})` : ''}.</p>
+      ) : (
+        <div className="mt-2 space-y-1.5">
+          <p className="text-xs text-muted">For {query.data.weightGrams} g, charged as this order is paying ({query.data.couriers.length} courier{query.data.couriers.length === 1 ? '' : 's'} available)</p>
+          <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line">
+            {query.data.couriers.slice(0, 5).map((courier, index) => (
+              <li key={courier.courierId} className={`flex items-center justify-between gap-3 px-3 py-2 ${index === 0 ? 'bg-emerald-50' : ''}`}>
+                <span>
+                  <span className="font-bold">{courier.courierName}</span>
+                  {courier.tatDays != null && <span className="text-xs text-muted"> · {courier.tatDays} day{courier.tatDays === 1 ? '' : 's'}</span>}
+                </span>
+                <span className="font-bold">{inr(Math.round(courier.ratePaise / 100))}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
   )
 }
 
