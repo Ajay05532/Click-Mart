@@ -4,11 +4,10 @@ import { findAccountById } from '../services/account.js'
 import { from, db, maybe, rows } from '../database/db.js'
 import { badRequest, notFound } from '../utils/errors.js'
 import { reviewImageUpload, storeImage } from '../services/storage.js'
-import { buildQuote, loadActiveOffers } from '../services/pricing.js'
+import { buildQuote } from '../services/pricing.js'
 import { serializeProduct } from '../utils/serializers.js'
 import { env } from '../config/env.js'
-import { getSettings } from '../services/settings.js'
-import { PRODUCT_SELECT } from '../database/selects.js'
+import { activeBanners, activeCategories, activeCoupons, activeProducts, displayOffers, publicSettings } from '../services/publicCache.js'
 import { actor, requireAuth } from '../middleware/auth.js'
 export const catalogRouter = Router()
 const listQuery = z.object({
@@ -38,27 +37,30 @@ function shuffleKey(seed, id) {
   return hash >>> 0
 }
 const arr = (value) => (value === undefined ? [] : Array.isArray(value) ? value : [value])
-const like = (value) => value.replace(/[%,()*\\]/g, ' ')
 catalogRouter.get('/products', async (req, res) => {
   const query = listQuery.parse(req.query)
   const categories = arr(query.category)
   const sizes = arr(query.size)
-  let request = from('Product').select(PRODUCT_SELECT).eq('isActive', true)
-  if (categories.length) request = request.in('categoryId', categories)
-  if (query.sub) request = request.eq('subcategoryId', query.sub)
-  if (query.ids)
-    request = request.in(
-      'id',
-      query.ids
-        .split(',')
-        .map((id) => id.trim())
-        .filter(Boolean)
-        .slice(0, 100),
-    )
-  if (query.bestseller === 'true') request = request.eq('isBestseller', true)
-  if (query.q) request = request.or(`name.ilike.%${like(query.q)}%,blurb.ilike.%${like(query.q)}%`)
-  const [offers, products] = await Promise.all([loadActiveOffers(), rows(request)])
+  const ids = query.ids
+    ? new Set(
+        query.ids
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean)
+          .slice(0, 100),
+      )
+    : null
+  const words = query.q?.toLowerCase()
+  const [offers, products] = await Promise.all([displayOffers(), activeProducts()])
   let items = products
+    .filter(
+      (product) =>
+        (!categories.length || categories.includes(product.categoryId)) &&
+        (!query.sub || product.subcategoryId === query.sub) &&
+        (!ids || ids.has(product.id)) &&
+        (query.bestseller !== 'true' || product.isBestseller) &&
+        (!words || product.name.toLowerCase().includes(words) || (product.blurb ?? '').toLowerCase().includes(words)),
+    )
     .filter((product) => (product.variants ?? []).some((variant) => variant.isActive))
     .filter((product) => {
       const active = (product.variants ?? []).filter((variant) => variant.isActive)
@@ -113,22 +115,13 @@ catalogRouter.get('/products', async (req, res) => {
   })
 })
 catalogRouter.get('/products/:slug', async (req, res) => {
-  const [offers, product] = await Promise.all([
-    loadActiveOffers(),
-    maybe(from('Product').select(PRODUCT_SELECT).eq('slug', String(req.params.slug)).eq('isActive', true).maybeSingle()),
-  ])
+  const [offers, products] = await Promise.all([displayOffers(), activeProducts()])
+  const product = products.find((item) => item.slug === String(req.params.slug))
   if (!product) throw notFound('Product')
-  const related = await rows(
-    from('Product')
-      .select(PRODUCT_SELECT)
-      .eq('isActive', true)
-      .neq('id', product.id)
-      .eq('categoryId', product.categoryId)
-      .order('sold', {
-        ascending: false,
-      })
-      .limit(4),
-  )
+  const related = products
+    .filter((item) => item.id !== product.id && item.categoryId === product.categoryId)
+    .sort((a, b) => b.sold - a.sold)
+    .slice(0, 4)
   res.json({
     product: serializeProduct(product, offers),
     related: related.map((item) => serializeProduct(item, offers)),
@@ -229,10 +222,7 @@ catalogRouter.post('/products/:slug/reviews', requireAuth, async (req, res) => {
   })
 })
 catalogRouter.get('/categories', async (_req, res) => {
-  const [categories, products] = await Promise.all([
-    rows(from('Category').select('*').eq('isActive', true).order('sortOrder').order('name')),
-    rows(from('Product').select('categoryId, subcategoryId').eq('isActive', true)),
-  ])
+  const [categories, products] = await Promise.all([activeCategories(), activeProducts()])
   const countOf = (id) => products.filter((product) => product.categoryId === id || product.subcategoryId === id).length
   res.json({
     items: categories
@@ -261,7 +251,7 @@ catalogRouter.get('/categories', async (_req, res) => {
   })
 })
 catalogRouter.get('/offers', async (_req, res) => {
-  const [offers, products] = await Promise.all([loadActiveOffers(), rows(from('Product').select(PRODUCT_SELECT).eq('isActive', true))])
+  const [offers, products] = await Promise.all([displayOffers(), activeProducts()])
   const deals = products
     .map((product) => serializeProduct(product, offers))
     .map((product) => {
@@ -294,11 +284,7 @@ catalogRouter.get('/offers', async (_req, res) => {
 })
 catalogRouter.get('/coupons/active', async (_req, res) => {
   const now = Date.now()
-  const items = await rows(
-    from('Coupon').select('*').eq('isActive', true).order('createdAt', {
-      ascending: false,
-    }),
-  )
+  const items = await activeCoupons()
   res.json({
     items: items
       .filter((coupon) => (!coupon.startsAt || new Date(coupon.startsAt).getTime() <= now) && (!coupon.endsAt || new Date(coupon.endsAt).getTime() >= now))
@@ -316,17 +302,18 @@ catalogRouter.get('/coupons/active', async (_req, res) => {
 catalogRouter.get('/banners', async (req, res) => {
   const placement = z.enum(['HERO', 'PROMO']).optional().parse(req.query.placement)
   const now = Date.now()
-  let request = from('Banner').select('*').eq('isActive', true).order('sortOrder')
-  if (placement) request = request.eq('placement', placement)
-  const items = (await rows(request)).filter(
-    (banner) => (!banner.startsAt || new Date(banner.startsAt).getTime() <= now) && (!banner.endsAt || new Date(banner.endsAt).getTime() >= now),
+  const items = (await activeBanners()).filter(
+    (banner) =>
+      (!placement || banner.placement === placement) &&
+      (!banner.startsAt || new Date(banner.startsAt).getTime() <= now) &&
+      (!banner.endsAt || new Date(banner.endsAt).getTime() >= now),
   )
   res.json({
     items,
   })
 })
 catalogRouter.get('/settings/public', async (_req, res) => {
-  const s = await getSettings()
+  const s = await publicSettings()
   res.json({
     storeName: s.storeName,
     supportEmail: s.supportEmail,

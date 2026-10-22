@@ -228,7 +228,7 @@ function ProductDetails({ product, related }: { product: Product; related: Produ
               </button>
               <button
                 type="button"
-                onClick={() => wishlist.toggle(product.id)}
+                onClick={() => wishlist.toggle(product.id, product.name)}
                 aria-pressed={wishlist.has(product.id)}
                 aria-label="Save to wishlist"
                 className={`grid size-[52px] place-items-center rounded-full border-2 transition ${

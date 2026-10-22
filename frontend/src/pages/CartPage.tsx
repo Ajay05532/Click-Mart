@@ -17,7 +17,7 @@ import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 export function CartPage() {
   useDocumentTitle('Your Cart', { noindex: true })
   const { user } = useAuth()
-  const { lines, count, total, pricing, quoteError, reloadQuote, updateQty, removeItem } = useCart()
+  const { lines, count, total, pricing, quoteError, reloadQuote, updateQty, confirmRemove } = useCart()
   const { location: delivery } = useDeliveryLocation()
   const popular = useProducts({ sort: 'popular', pageSize: 12 })
   const suggestions = (popular.data?.items ?? []).filter((product) => product.inStock && !lines.some((line) => line.productId === product.id)).slice(0, 4)
@@ -85,7 +85,7 @@ export function CartPage() {
                           </div>
                           <button
                             type="button"
-                            onClick={() => removeItem(line.variantId)}
+                            onClick={() => confirmRemove(line.variantId, `${line.name} (${line.size})`)}
                             aria-label={`Remove ${line.name}`}
                             className="grid size-9 shrink-0 place-items-center rounded-full text-muted transition hover:bg-rose-50 hover:text-rose-600"
                           >
@@ -93,7 +93,12 @@ export function CartPage() {
                           </button>
                         </div>
                         <div className="mt-auto flex flex-wrap items-end justify-between gap-3 pt-3">
-                          <QuantityInput value={line.quantity} max={Math.max(1, line.stock)} onChange={(quantity) => updateQty(line.variantId, quantity)} />
+                          <QuantityInput
+                            value={line.quantity}
+                            min={0}
+                            max={Math.max(1, line.stock)}
+                            onChange={(quantity) => (quantity < 1 ? confirmRemove(line.variantId, `${line.name} (${line.size})`) : updateQty(line.variantId, quantity))}
+                          />
                           <div className="text-right">
                             <p className="text-lg font-extrabold">{formatPrice(line.lineTotal)}</p>
                             {off > 0 && (

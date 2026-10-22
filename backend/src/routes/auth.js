@@ -7,7 +7,9 @@ import {
   CODE_MINUTES,
   consumePasswordReset,
   createResetCode,
+  createVerifyCode,
   verifyResetCode,
+  verifyEmailCode,
   burnTime,
   clearAccessCookieOptions,
   hashPassword,
@@ -19,11 +21,12 @@ import {
   revokeAllRefreshTokens,
   revokeRefreshToken,
   signAccessToken,
+  unusablePassword,
   verifyPassword,
 } from '../services/auth.js'
 import { createAccount, findAccountByEmail, findAccountById, updateLogin } from '../services/account.js'
 import { badRequest, conflict, unauthorized } from '../utils/errors.js'
-import { sendPasswordChanged, sendPasswordResetCode, sendWelcome } from '../services/emails.js'
+import { sendPasswordChanged, sendPasswordResetCode, sendVerifyCode, sendWelcome } from '../services/emails.js'
 import { actor, requireAuth } from '../middleware/auth.js'
 import { permissionsFor } from '../services/permissions.js'
 export const publicUser = (user, permissions) => ({
@@ -64,21 +67,87 @@ const registerSchema = z.object({
     .string()
     .regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit mobile number')
     .optional(),
-  password: z.string().min(8, 'Use at least 8 characters').max(100),
 })
 export const authRouter = Router()
 authRouter.post('/register', async (req, res) => {
   const data = registerSchema.parse(req.body)
-  if (await findAccountByEmail(data.email)) throw conflict('An account with this email already exists')
+  const existing = await findAccountByEmail(data.email)
+  if (existing && existing.emailVerifiedAt) throw conflict('An account with this email already exists')
+  if (existing) {
+    // They registered before but never confirmed the email: resend instead of a dead-end "already exists".
+    const code = await createVerifyCode(existing.id)
+    void sendVerifyCode(existing, code, CODE_MINUTES)
+    return res.status(201).json({ requiresVerification: true, email: existing.email, expiresInMinutes: CODE_MINUTES })
+  }
   const user = await createAccount({
     name: data.name,
     email: data.email,
     phone: data.phone ?? null,
-    passwordHash: await hashPassword(data.password),
+    // The password is chosen after the email is confirmed (POST /auth/complete-signup).
+    passwordHash: await unusablePassword(),
     role: 'CUSTOMER',
+    emailVerifiedAt: null,
   })
+  const code = await createVerifyCode(user.id)
+  void sendVerifyCode(user, code, CODE_MINUTES)
+  // No session yet: the account only becomes usable once /auth/verify-email confirms this is really their inbox.
+  res.status(201).json({
+    requiresVerification: true,
+    email: user.email,
+    expiresInMinutes: CODE_MINUTES,
+  })
+})
+authRouter.post('/resend-verification', async (req, res) => {
+  const data = z
+    .object({
+      email: z.string().trim().toLowerCase().email(),
+    })
+    .parse(req.body)
+  const user = await findAccountByEmail(data.email)
+  if (user && !user.isBlocked && !user.emailVerifiedAt) {
+    const code = await createVerifyCode(user.id)
+    void sendVerifyCode(user, code, CODE_MINUTES)
+  }
+  // Same answer either way, so this cannot be used to probe which emails are registered.
+  res.json({
+    message: 'If that email is waiting to be confirmed, we have sent it a fresh 6-digit code.',
+    expiresInMinutes: CODE_MINUTES,
+  })
+})
+authRouter.post('/verify-email', async (req, res) => {
+  const data = z
+    .object({
+      email: z.string().trim().toLowerCase().email(),
+      code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code from the email'),
+    })
+    .parse(req.body)
+  const user = await findAccountByEmail(data.email)
+  if (!user || user.isBlocked) throw badRequest('That code is not right.')
+  if (user.emailVerifiedAt) throw badRequest('This email is already confirmed. Try logging in.')
+  const result = await verifyEmailCode(user.id, data.code)
+  if (result.error === 'expired') throw badRequest('This code has expired or was already used. Request a new one.')
+  if (result.error === 'locked') throw badRequest('Too many wrong tries. Request a new code.')
+  if (!result.token) throw badRequest(result.triesLeft ? `That code is not right. ${result.triesLeft} ${result.triesLeft === 1 ? 'try' : 'tries'} left.` : 'That code is not right.')
+  // Next the shopper chooses a password with this token; only then is the account confirmed and signed in.
+  res.json({ setupToken: result.token, expiresInMinutes: 30 })
+})
+authRouter.post('/complete-signup', async (req, res) => {
+  const data = z
+    .object({
+      token: z.string().min(20).max(200),
+      password: z.string().min(8, 'Use at least 8 characters').max(100),
+    })
+    .parse(req.body)
+  const userId = await consumePasswordReset(data.token)
+  if (!userId) throw badRequest('This step has expired. Log in with your email to get a new code.')
+  const user = await findAccountById(userId)
+  if (!user || user.isBlocked) throw badRequest('This step has expired. Log in with your email to get a new code.')
+  // A confirmed account changes its password through "Forgot password", which also signs out other devices.
+  if (user.emailVerifiedAt) throw badRequest('This email is already confirmed. Log in, or use Forgot password.')
+  const now = new Date().toISOString()
+  await updateLogin(user.id, { passwordHash: await hashPassword(data.password), emailVerifiedAt: now, lastLoginAt: now })
   void sendWelcome(user)
-  res.status(201).json(await startSession(res, user))
+  res.json(await startSession(res, { ...user, emailVerifiedAt: now }))
 })
 authRouter.post('/login', async (req, res) => {
   const data = z
@@ -100,6 +169,11 @@ authRouter.post('/login', async (req, res) => {
     throw unauthorized(adminPortal ? 'Incorrect password. Try again or reset it' : 'Incorrect email or password')
   }
   if (user.isBlocked) throw unauthorized('This account has been disabled')
+  if (!user.emailVerifiedAt) {
+    const code = await createVerifyCode(user.id)
+    void sendVerifyCode(user, code, CODE_MINUTES)
+    throw unauthorized('Confirm your email first. We just sent a fresh 6-digit code to it.', { requiresVerification: true, email: user.email })
+  }
   const patch = {
     lastLoginAt: new Date().toISOString(),
   }

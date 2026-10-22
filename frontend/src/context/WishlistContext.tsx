@@ -1,11 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from '../lib/api.ts'
 import { useAuth } from './AuthContext.tsx'
+import { useNotice } from './NoticeContext.tsx'
 
 type WishlistContextValue = {
   ids: string[]
   has: (productId: string) => boolean
-  toggle: (productId: string) => void
+  /** Adds or removes, and tells the shopper (with Undo on remove). Pass the product name for a friendlier message. */
+  toggle: (productId: string, name?: string) => void
   clear: () => void
 }
 
@@ -24,6 +26,7 @@ function loadIds(): string[] {
 /** Saved on this device for guests, and on the account (merged on log-in) for customers. */
 export function WishlistProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
+  const notify = useNotice()
   const [ids, setIds] = useState<string[]>(loadIds)
   const synced = useRef<string | null>(null)
 
@@ -55,13 +58,35 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
     }
   }, [user])
 
-  const toggle = useCallback(
-    (productId: string) => {
-      const adding = !ids.includes(productId)
-      setIds((current) => (adding ? [...current, productId] : current.filter((id) => id !== productId)))
+  const save = useCallback(
+    (productId: string, adding: boolean) => {
+      setIds((current) => (adding ? [...current.filter((id) => id !== productId), productId] : current.filter((id) => id !== productId)))
       if (user) api(`/me/wishlist/${productId}`, { method: adding ? 'PUT' : 'DELETE' }).catch(() => undefined)
     },
-    [ids, user],
+    [user],
+  )
+
+  const toggle = useCallback(
+    (productId: string, name?: string) => {
+      const adding = !ids.includes(productId)
+      save(productId, adding)
+      const item = name ?? 'Item'
+      if (!adding) {
+        notify({ tone: 'info', title: `${item} removed from your wishlist`, actions: [{ label: 'Undo', onClick: () => save(productId, true) }] })
+      } else if (user) {
+        notify({ title: `${item} saved to your wishlist`, actions: [{ label: 'View wishlist', to: '/wishlist' }] })
+      } else {
+        notify({
+          title: `${item} saved to your wishlist`,
+          text: 'It is saved on this device only. Log in to keep it on every device.',
+          actions: [
+            { label: 'View wishlist', to: '/wishlist' },
+            { label: 'Log in', to: '/login', state: { from: '/wishlist' }, primary: true },
+          ],
+        })
+      }
+    },
+    [ids, user, save, notify],
   )
 
   const clear = useCallback(() => {

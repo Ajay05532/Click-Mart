@@ -6,6 +6,7 @@ import { StoreLayout } from './components/layout/StoreLayout.tsx'
 import { AuthProvider } from './context/AuthContext.tsx'
 import { CartProvider } from './context/CartContext.tsx'
 import { LocationProvider } from './context/LocationContext.tsx'
+import { NoticeProvider } from './context/NoticeContext.tsx'
 import { WishlistProvider } from './context/WishlistContext.tsx'
 import { RequireAuth } from './components/auth/RequireAuth.tsx'
 import { HomePage } from './pages/HomePage.tsx'
@@ -13,6 +14,7 @@ import { HomePage } from './pages/HomePage.tsx'
 const AboutPage = lazy(() => import('./pages/AboutPage.tsx').then((module) => ({ default: module.AboutPage })))
 const AuthPage = lazy(() => import('./pages/AuthPage.tsx').then((module) => ({ default: module.AuthPage })))
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage.tsx').then((module) => ({ default: module.ForgotPasswordPage })))
+const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage.tsx').then((module) => ({ default: module.VerifyEmailPage })))
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage.tsx').then((module) => ({ default: module.ResetPasswordPage })))
 const CartPage = lazy(() => import('./pages/CartPage.tsx').then((module) => ({ default: module.CartPage })))
 const CheckoutPage = lazy(() => import('./pages/CheckoutPage.tsx').then((module) => ({ default: module.CheckoutPage })))
@@ -51,6 +53,7 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
+    <NoticeProvider>
     <AuthProvider>
       <LocationProvider>
       <CartProvider>
@@ -82,6 +85,7 @@ export default function App() {
                 <Route path="help/tickets" element={<RequireAuth><MyRequestsPage /></RequireAuth>} />
                 <Route path="help/tickets/:code" element={<RequireAuth><TicketPage /></RequireAuth>} />
                 <Route path="login" element={<AuthPage />} />
+                <Route path="verify-email" element={<VerifyEmailPage />} />
                 <Route path="forgot-password" element={<ForgotPasswordPage />} />
                 <Route path="reset-password" element={<ResetPasswordPage />} />
                 <Route path="privacy" element={<PrivacyPage />} />
@@ -94,6 +98,7 @@ export default function App() {
       </CartProvider>
       </LocationProvider>
     </AuthProvider>
+    </NoticeProvider>
     </QueryClientProvider>
   )
 }

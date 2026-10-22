@@ -3,6 +3,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { ApiError, api, errorMessage } from '../lib/api.ts'
 import type { Pack, Product } from '../types.ts'
 import { useAuth } from './AuthContext.tsx'
+import { useNotice } from './NoticeContext.tsx'
+import { TrashIcon } from '../components/icons.tsx'
+import { ConfirmDialog } from '../components/ui/ConfirmDialog.tsx'
 
 type CartLine = { variantId: string; quantity: number }
 
@@ -54,11 +57,12 @@ type CartContextValue = {
   /** Set when the price quote failed and there is nothing to show yet. */
   quoteError: string | null
   reloadQuote: () => void
-  toast: { text: string; count?: number } | null
-  toastTick: number
-  addItem: (variantId: string, quantity?: number, label?: string) => void
+  /** Pass `quiet` when adding several at once, then show one summary message yourself. */
+  addItem: (variantId: string, quantity?: number, label?: string, quiet?: boolean) => void
   updateQty: (variantId: string, quantity: number) => void
   removeItem: (variantId: string) => void
+  /** Asks "Remove … from your cart?" first, then removes with an Undo message. Use for trash buttons and "−" at 1. */
+  confirmRemove: (variantId: string, name?: string) => void
   /** Resolves to an error message, or null when the coupon was accepted. */
   applyCoupon: (code: string) => Promise<string | null>
   clearCoupon: () => void
@@ -140,14 +144,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [lines, setLines] = useState<CartLine[]>(loadLines)
   const [cacheTick, setCacheTick] = useState(0)
   const [couponCode, setCouponCode] = useState<string | null>(() => localStorage.getItem(COUPON_KEY))
-  const [toast, setToast] = useState<{ text: string; count?: number } | null>(null)
-  const [toastTick, setToastTick] = useState(0)
+  const notify = useNotice()
   const synced = useRef<string | null>(null)
-
-  const notify = useCallback((text: string, count?: number) => {
-    setToastTick((tick) => tick + 1)
-    setToast({ text, count })
-  }, [])
+  const linesRef = useRef(lines)
+  useEffect(() => {
+    linesRef.current = lines
+  }, [lines])
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(lines))
@@ -156,12 +158,6 @@ export function CartProvider({ children }: { children: ReactNode }) {
     if (couponCode) localStorage.setItem(COUPON_KEY, couponCode)
     else localStorage.removeItem(COUPON_KEY)
   }, [couponCode])
-  useEffect(() => {
-    if (!toast) return
-    const timer = window.setTimeout(() => setToast(null), 4500)
-    return () => window.clearTimeout(timer)
-  }, [toast, toastTick])
-
   // Logging in: combine the guest cart with the one saved on the account.
   useEffect(() => {
     if (!user) {
@@ -228,10 +224,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
         const available = details.available ?? 0
         setLines((current) => (available > 0 ? current.map((line) => (line.variantId === details.variantId ? { ...line, quantity: available } : line)) : current.filter((line) => line.variantId !== details.variantId)))
       }
-      notify(failure.message)
+      notify({ tone: 'warning', title: 'Your cart was updated', text: failure.message, actions: [{ label: 'Review cart', to: '/cart' }] })
     } else if (failure.status === 400 && couponCode) {
       setCouponCode(null)
-      notify(failure.message)
+      notify({ tone: 'warning', title: `Coupon ${couponCode} was removed`, text: failure.message })
     }
   }, [failure, couponCode, notify])
 
@@ -259,17 +255,23 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [data, lines, queryClient, cacheTick])
 
   const addItem = useCallback(
-    (variantId: string, quantity = 1, label?: string) => {
-      let count = 0
-      setLines((current) => {
-        const existing = current.find((line) => line.variantId === variantId)
-        const next = existing
-          ? current.map((line) => (line.variantId === variantId ? { ...line, quantity: Math.min(99, line.quantity + quantity) } : line))
-          : [...current, { variantId, quantity }]
-        count = next.reduce((sum, line) => sum + line.quantity, 0)
-        return next
+    (variantId: string, quantity = 1, label?: string, quiet = false) => {
+      const current = linesRef.current
+      const next = current.some((line) => line.variantId === variantId)
+        ? current.map((line) => (line.variantId === variantId ? { ...line, quantity: Math.min(99, line.quantity + quantity) } : line))
+        : [...current, { variantId, quantity }]
+      linesRef.current = next
+      setLines(next)
+      if (quiet) return
+      const count = next.reduce((sum, line) => sum + line.quantity, 0)
+      notify({
+        title: `${label ?? 'Item'} added to cart`,
+        text: `Your cart now has ${count} ${count === 1 ? 'item' : 'items'}.`,
+        actions: [
+          { label: 'View cart', to: '/cart' },
+          { label: 'Checkout', to: '/checkout', primary: true },
+        ],
       })
-      notify(`${label ?? 'Item'} added to cart`, count)
     },
     [notify],
   )
@@ -278,6 +280,22 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setLines((current) => (quantity < 1 ? current.filter((line) => line.variantId !== variantId) : current.map((line) => (line.variantId === variantId ? { ...line, quantity: Math.min(99, quantity) } : line))))
   }, [])
   const removeItem = useCallback((variantId: string) => setLines((current) => current.filter((line) => line.variantId !== variantId)), [])
+
+  const [removing, setRemoving] = useState<{ variantId: string; name: string } | null>(null)
+  const confirmRemove = useCallback((variantId: string, name?: string) => setRemoving({ variantId, name: name ?? 'this item' }), [])
+  const cancelRemove = useCallback(() => setRemoving(null), [])
+  const finishRemove = useCallback(() => {
+    if (!removing) return
+    const { variantId, name } = removing
+    const quantity = linesRef.current.find((line) => line.variantId === variantId)?.quantity ?? 1
+    setRemoving(null)
+    removeItem(variantId)
+    notify({
+      tone: 'info',
+      title: `${name} removed from your cart`,
+      actions: [{ label: 'Undo', onClick: () => setLines((current) => (current.some((line) => line.variantId === variantId) ? current : [...current, { variantId, quantity }])) }],
+    })
+  }, [removing, removeItem, notify])
 
   const reloadQuote = useCallback(() => {
     void quote.refetch()
@@ -316,11 +334,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
       pricing: lines.length > 0 && quote.isFetching,
       quoteError: lines.length > 0 && quote.isError && !quote.isFetching ? errorMessage(quote.error) : null,
       reloadQuote,
-      toast,
-      toastTick,
       addItem,
       updateQty,
       removeItem,
+      confirmRemove,
       applyCoupon,
       clearCoupon: () => setCouponCode(null),
       clear: () => {
@@ -328,10 +345,26 @@ export function CartProvider({ children }: { children: ReactNode }) {
         setCouponCode(null)
       },
     }),
-    [resolved, lines, data, subtotal, quote.isFetching, quote.isError, quote.error, reloadQuote, toast, toastTick, addItem, updateQty, removeItem, applyCoupon],
+    [resolved, lines, data, subtotal, quote.isFetching, quote.isError, quote.error, reloadQuote, addItem, updateQty, removeItem, confirmRemove, applyCoupon],
   )
 
-  return <CartContext.Provider value={value}>{children}</CartContext.Provider>
+  return (
+    <CartContext.Provider value={value}>
+      {children}
+      {removing && (
+        <ConfirmDialog
+          danger
+          icon={<TrashIcon className="size-6" />}
+          title={`Remove ${removing.name} from your cart?`}
+          text="You can add it back any time from the shop."
+          cancelLabel="Keep it"
+          confirmLabel="Remove"
+          onCancel={cancelRemove}
+          onConfirm={finishRemove}
+        />
+      )}
+    </CartContext.Provider>
+  )
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

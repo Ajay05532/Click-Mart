@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { AuthLink, AuthShell, FormError, FormField, PasswordInput, PasswordStrength } from '../components/auth/AuthShell.tsx'
+import { AuthLink, AuthShell, FormError, FormField, IconField, PasswordInput, PasswordStrength } from '../components/auth/AuthShell.tsx'
 import { CodeInput } from '../components/auth/CodeInput.tsx'
+import { LockIcon, MailIcon } from '../components/icons.tsx'
 import { api, errorMessage } from '../lib/api.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
@@ -115,7 +116,9 @@ export function ForgotPasswordPage() {
       {step === 'email' && (
         <form onSubmit={submitEmail} noValidate className="space-y-5">
           <FormField label="Email">
-            <input type="email" value={email} onChange={(e) => { setEmail(e.target.value); setError('') }} autoComplete="email" className="field" aria-invalid={!!error} placeholder="you@example.com" autoFocus />
+            <IconField icon={<MailIcon className="size-[18px]" />}>
+              <input type="email" value={email} onChange={(e) => { setEmail(e.target.value); setError('') }} autoComplete="email" className="field pl-11" aria-invalid={!!error} placeholder="you@example.com" autoFocus />
+            </IconField>
           </FormField>
           <FormError message={error} />
           <button type="submit" disabled={busy} className="btn btn-accent btn-lg w-full">
@@ -166,11 +169,15 @@ export function ForgotPasswordPage() {
       {step === 'password' && (
         <form onSubmit={submitPassword} noValidate className="space-y-5">
           <FormField label="New password">
-            <PasswordInput value={password} onChange={(e) => { setPassword(e.target.value); setError('') }} autoComplete="new-password" placeholder="At least 8 characters" autoFocus />
+            <IconField icon={<LockIcon className="size-[18px]" />}>
+              <PasswordInput value={password} onChange={(e) => { setPassword(e.target.value); setError('') }} autoComplete="new-password" placeholder="At least 8 characters" autoFocus />
+            </IconField>
             <PasswordStrength password={password} />
           </FormField>
           <FormField label="Confirm new password">
-            <PasswordInput value={confirm} onChange={(e) => { setConfirm(e.target.value); setError('') }} autoComplete="new-password" placeholder="Type it again" />
+            <IconField icon={<LockIcon className="size-[18px]" />}>
+              <PasswordInput value={confirm} onChange={(e) => { setConfirm(e.target.value); setError('') }} autoComplete="new-password" placeholder="Type it again" />
+            </IconField>
           </FormField>
           <FormError message={error} />
           <button type="submit" disabled={busy} className="btn btn-accent btn-lg w-full">

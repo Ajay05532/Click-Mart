@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext.tsx'
 import { useCart } from '../../context/CartContext.tsx'
 import { useDeliveryLocation } from '../../context/LocationContext.tsx'
 import { useWishlist } from '../../context/WishlistContext.tsx'
-import { featuredPack, productPath, useCategories, useProducts, useProductsByIds, useStoreContact } from '../../lib/catalog.ts'
+import { featuredPack, productPath, useCategories, useProducts, useStoreContact } from '../../lib/catalog.ts'
 import { formatPrice } from '../../lib/money.ts'
 import { useUnreadTickets } from '../../lib/support.ts'
 import { ProductMedia } from '../product/ProductMedia.tsx'
@@ -40,7 +40,7 @@ const links = [
   { to: '/contact', label: 'Contact' },
 ]
 
-type Panel = 'search' | 'cart' | 'account' | 'shop' | 'wishlist' | null
+type Panel = 'search' | 'account' | 'shop' | null
 
 const accountLinks = [
   { to: '/settings?tab=profile', label: 'My Profile', icon: UserIcon },
@@ -97,7 +97,6 @@ export function Header() {
   const found = useProducts({ q: debounced, pageSize: 6 }, panel === 'search' && debounced.length > 0)
   const popular = useProducts({ bestseller: true, pageSize: 6 }, panel === 'search' && debounced.length === 0)
   const suggestions = ((debounced ? found.data?.items : popular.data?.items) ?? []).slice(0, 6)
-  const savedProducts = useProductsByIds(panel === 'wishlist' ? wishlist.ids : []).data ?? []
   const shelf = useProducts(
     { category: lone?.id, sub: menuGrade === 'all' ? undefined : menuGrade, sort: 'popular', pageSize: 24 },
     Boolean(lone) && (panel === 'shop' || mobileOpen),
@@ -391,127 +390,33 @@ export function Header() {
               )}
             </div>
 
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => toggle('wishlist')}
-                className="relative rounded-xl p-2 hover:bg-canvas"
-                aria-label={`Wishlist, ${wishlist.ids.length} saved`}
-              >
-                <HeartIcon className="size-5" filled={wishlist.ids.length > 0} />
-                {wishlist.ids.length > 0 && (
-                  <span key={wishlist.ids.length} className="motion-pop absolute top-0 right-0 grid size-4 place-items-center rounded-full bg-rose-500 text-[10px] font-bold text-white">
-                    {wishlist.ids.length}
-                  </span>
-                )}
-              </button>
-              {panel === 'wishlist' && (
-                <div className="motion-panel absolute top-full right-0 z-10 mt-2 w-80 rounded-2xl border border-line bg-white text-ink shadow-pop">
-                  <div className="flex items-center justify-between border-b border-line px-4 py-3">
-                    <p className="font-semibold">Wishlist</p>
-                    <Link to="/wishlist" onClick={() => setPanel(null)} className="text-xs font-bold text-brand">View all →</Link>
-                  </div>
-                  {savedProducts.length === 0 ? (
-                    <p className="px-4 py-6 text-sm text-muted">Save products with the heart on any card.</p>
-                  ) : (
-                    <ul className="max-h-80 overflow-auto">
-                      {savedProducts.map((product) => (
-                        <li key={product.id} className="flex items-center gap-3 px-4 py-2.5">
-                          <Link to={`/product/${product.slug}`} onClick={() => setPanel(null)} className="size-12 overflow-hidden rounded-lg bg-canvas">
-                            <ProductMedia name={product.name} image={product.image} art={product.art} className="size-full" />
-                          </Link>
-                          <div className="min-w-0 flex-1">
-                            <Link to={`/product/${product.slug}`} onClick={() => setPanel(null)} className="block truncate text-sm font-semibold">
-                              {product.name}
-                            </Link>
-                            <p className="text-xs text-muted">{formatPrice(featuredPack(product).price)}</p>
-                          </div>
-                          <button type="button" onClick={() => wishlist.toggle(product.id)} className="text-xs font-medium text-rose-600">
-                            Remove
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+            <Link
+              to="/wishlist"
+              onClick={() => setPanel(null)}
+              className="relative rounded-xl p-2 hover:bg-canvas"
+              aria-label={`Wishlist, ${wishlist.ids.length} saved`}
+            >
+              <HeartIcon className="size-5" filled={wishlist.ids.length > 0} />
+              {wishlist.ids.length > 0 && (
+                <span key={wishlist.ids.length} className="motion-pop absolute top-0 right-0 grid size-4 place-items-center rounded-full bg-rose-500 text-[10px] font-bold text-white">
+                  {wishlist.ids.length}
+                </span>
               )}
-            </div>
+            </Link>
 
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => toggle('cart')}
-                className="relative flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-canvas"
-                aria-label={`Cart, ${cart.count} items`}
-              >
-                <CartIcon className="size-6" />
-                {cart.count > 0 && (
-                  <span key={cart.count} className="motion-pop absolute -top-0.5 left-5 grid size-5 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
-                    {cart.count}
-                  </span>
-                )}
-              </button>
-              {panel === 'cart' && (
-                <div className="motion-panel absolute top-full right-0 z-10 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-line bg-white text-ink shadow-pop">
-                  <p className="border-b border-line px-4 py-3 font-semibold">Cart ({cart.count})</p>
-                  {cart.count === 0 ? (
-                    <p className="px-4 py-6 text-sm text-muted">Your cart is empty.</p>
-                  ) : cart.lines.length === 0 ? (
-                    <div className="px-4 py-6 text-sm">
-                      {cart.quoteError ? (
-                        <>
-                          <p className="text-rose-600">{cart.quoteError}</p>
-                          <button type="button" onClick={cart.reloadQuote} className="mt-2 font-semibold text-brand">
-                            Try again
-                          </button>
-                        </>
-                      ) : (
-                        <p className="text-muted">Loading your cart…</p>
-                      )}
-                    </div>
-                  ) : (
-                    <ul className="max-h-72 overflow-auto">
-                      {cart.lines.map((line) => (
-                        <li key={line.key} className="flex gap-3 px-4 py-3">
-                          <Link to={`/product/${line.slug}`} onClick={() => setPanel(null)} className="size-14 shrink-0 overflow-hidden rounded-lg bg-canvas">
-                            <ProductMedia name={line.name} image={line.image} art={line.art} className="size-full" />
-                          </Link>
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-semibold">{line.name}</p>
-                            <p className="text-xs text-muted">
-                              {line.size} · Qty {line.quantity}
-                            </p>
-                            <p className="text-sm font-bold">{formatPrice(line.lineTotal)}</p>
-                          </div>
-                          <button type="button" onClick={() => cart.removeItem(line.variantId)} className="text-xs text-rose-600">
-                            Remove
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <div className="border-t border-line p-4">
-                    <div className="mb-3 flex justify-between text-sm">
-                      <span className="text-muted">Subtotal</span>
-                      <span className="font-bold">{cart.pricing && cart.subtotal === 0 ? '…' : formatPrice(cart.subtotal)}</span>
-                    </div>
-                    <Link to="/cart" onClick={() => setPanel(null)} className="btn btn-outline w-full">
-                      View cart
-                    </Link>
-                    <Link
-                      to={user ? '/checkout' : '/login'}
-                      state={user ? undefined : { from: '/checkout' }}
-                      onClick={() => setPanel(null)}
-                      className={`btn mt-2 w-full ${
-                        cart.count === 0 ? 'pointer-events-none bg-slate-300 text-white' : 'btn-accent'
-                      }`}
-                    >
-                      {user ? 'Checkout' : 'Login to checkout'}
-                    </Link>
-                  </div>
-                </div>
+            <Link
+              to="/cart"
+              onClick={() => setPanel(null)}
+              className="relative flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-canvas"
+              aria-label={`Cart, ${cart.count} items`}
+            >
+              <CartIcon className="size-6" />
+              {cart.count > 0 && (
+                <span key={cart.count} className="motion-pop absolute -top-0.5 left-5 grid size-5 place-items-center rounded-full bg-accent text-[11px] font-bold text-white">
+                  {cart.count}
+                </span>
               )}
-            </div>
+            </Link>
 
             <button
               type="button"

@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
 import jwt from 'jsonwebtoken'
 import { findAccountById } from './account.js'
+import { hashPassword } from './passwords.js'
 import { exec, from, maybe, rows } from '../database/db.js'
 import { env } from '../config/env.js'
 const REFRESH_DAYS = 30
@@ -145,6 +146,47 @@ export async function verifyResetCode(userId, code) {
   return { token: await createPasswordReset(userId) }
 }
 
+/** A fresh 6-digit code confirming a newly registered email. Any older unused code for this person stops working. */
+export async function createVerifyCode(userId) {
+  const code = String(randomInt(0, 1_000_000)).padStart(6, '0')
+  await exec(from('PasswordReset').delete().eq('userId', userId).eq('kind', 'verify').is('usedAt', null))
+  await exec(
+    from('PasswordReset').insert({
+      userId,
+      kind: 'verify',
+      tokenHash: codeHash(userId, code),
+      expiresAt: new Date(Date.now() + CODE_MINUTES * 60000).toISOString(),
+    }),
+  )
+  return code
+}
+
+/**
+ * Checks an email-confirmation code the same way verifyResetCode checks a reset code (same try limit).
+ * Right: returns { token }, a one-time 30-minute token for choosing the password (POST /auth/complete-signup),
+ * which is also when the account is marked verified. Wrong: { error, triesLeft? }.
+ */
+export async function verifyEmailCode(userId, code) {
+  const record = await maybe(
+    from('PasswordReset').select('id, tokenHash, expiresAt, attempts').eq('userId', userId).eq('kind', 'verify').is('usedAt', null).order('createdAt', { ascending: false }).limit(1).maybeSingle(),
+  )
+  if (!record || new Date(record.expiresAt) < new Date()) return { error: 'expired' }
+  if (record.attempts >= CODE_TRIES) return { error: 'locked' }
+  const given = Buffer.from(codeHash(userId, code))
+  const expected = Buffer.from(record.tokenHash)
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+    const attempts = record.attempts + 1
+    await exec(from('PasswordReset').update({ attempts }).eq('id', record.id))
+    return attempts >= CODE_TRIES ? { error: 'locked' } : { error: 'wrong', triesLeft: CODE_TRIES - attempts }
+  }
+  const claimed = await rows(from('PasswordReset').update({ usedAt: new Date().toISOString() }).eq('id', record.id).is('usedAt', null).select('id'))
+  if (claimed.length !== 1) return { error: 'expired' }
+  return { token: await createPasswordReset(userId) }
+}
+
+/** A password nobody knows, for a new sign-up until they choose theirs after confirming the email. */
+export const unusablePassword = () => hashPassword(randomBytes(32).toString('hex'))
+
 export async function createPasswordReset(userId) {
   const token = randomBytes(32).toString('hex')
   await exec(from('PasswordReset').delete().eq('userId', userId).is('usedAt', null))
@@ -158,8 +200,9 @@ export async function createPasswordReset(userId) {
   return token
 }
 export async function consumePasswordReset(token) {
-  // Only one-time reset tokens, never an emailed code: a code must go through verifyResetCode and its try limit.
-  const record = await maybe(from('PasswordReset').select('id, userId, expiresAt, usedAt').eq('tokenHash', sha(token)).neq('kind', 'code').maybeSingle())
+  // Only one-time reset links: a code must go through verifyResetCode and its try limit, and a 'verify' row
+  // (email confirmation) must never be usable as a password-reset link.
+  const record = await maybe(from('PasswordReset').select('id, userId, expiresAt, usedAt').eq('tokenHash', sha(token)).eq('kind', 'link').maybeSingle())
   if (!record || record.usedAt || new Date(record.expiresAt) < new Date()) return null
   const claimed = await rows(
     from('PasswordReset')
