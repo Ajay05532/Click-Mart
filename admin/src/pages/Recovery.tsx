@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api.ts'
 import { Button, Field, Input, errorMessage } from '../ui.tsx'
@@ -21,34 +21,111 @@ function Shell({ title, subtitle, children }: { title: string; subtitle: string;
 }
 
 export function ForgotPasswordPage() {
+  const navigate = useNavigate()
+  const [step, setStep] = useState<'email' | 'code' | 'password' | 'done'>('email')
   const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  const [token, setToken] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [sent, setSent] = useState(false)
-  const submit = async (event: FormEvent) => {
-    event.preventDefault()
+  const [wait, setWait] = useState(0)
+
+  useEffect(() => {
+    if (wait <= 0) return
+    const timer = window.setTimeout(() => setWait((value) => value - 1), 1000)
+    return () => window.clearTimeout(timer)
+  }, [wait])
+
+  const run = async (work: () => Promise<void>) => {
     setBusy(true)
     setError('')
     try {
-      await api('/auth/forgot-password', { body: { email: email.trim() } })
-      setSent(true)
+      await work()
     } catch (err) {
       setError(errorMessage(err))
     } finally {
       setBusy(false)
     }
   }
+  const sendCode = () =>
+    run(async () => {
+      await api('/auth/forgot-password', { body: { email: email.trim() } })
+      setCode('')
+      setStep('code')
+      setWait(30)
+    })
+  const verify = (value: string) =>
+    run(async () => {
+      const result = await api<{ resetToken: string }>('/auth/verify-reset-code', { body: { email: email.trim(), code: value } })
+      setToken(result.resetToken)
+      setStep('password')
+    })
+  const save = (event: FormEvent) => {
+    event.preventDefault()
+    if (password.length < 8) return setError('Use at least 8 characters')
+    if (password !== confirm) return setError('The two passwords do not match')
+    void run(async () => {
+      await api('/auth/reset-password', { body: { token, password } })
+      setStep('done')
+      window.setTimeout(() => navigate('/login', { replace: true }), 2000)
+    })
+  }
+
+  const subtitle = {
+    email: 'We will email you a 6-digit code to confirm it is you.',
+    code: `Enter the 6-digit code we sent to ${email.trim()}. It expires in 10 minutes.`,
+    password: 'Code confirmed. Choose a new password.',
+    done: 'Your password is updated.',
+  }[step]
+  const alert = error && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{error}</p>
+
   return (
-    <Shell title="Reset your password" subtitle="We will email you a link that works once and expires in 30 minutes.">
-      {sent ? (
-        <p className="anim-rise rounded-xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">If that email belongs to an account, a reset link is on its way.</p>
-      ) : (
-        <form onSubmit={submit} className="space-y-4">
+    <Shell title="Reset your password" subtitle={subtitle}>
+      {step === 'email' && (
+        <form onSubmit={(event) => { event.preventDefault(); void sendCode() }} className="space-y-4">
           <Field label="Email"><Input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" autoFocus /></Field>
-          {error && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{error}</p>}
-          <Button type="submit" variant="accent" className="w-full" loading={busy}>Send reset link</Button>
+          {alert}
+          <Button type="submit" variant="accent" className="w-full" loading={busy}>Send code</Button>
         </form>
       )}
+      {step === 'code' && (
+        <form onSubmit={(event) => { event.preventDefault(); void verify(code) }} className="space-y-4">
+          <Field label="6-digit code">
+            <Input
+              value={code}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              autoFocus
+              placeholder="••••••"
+              className="!h-14 text-center font-mono !text-2xl font-extrabold tracking-[0.5em]"
+              onChange={(e) => {
+                const next = e.target.value.replace(/\D/g, '').slice(0, 6)
+                setCode(next)
+                setError('')
+                if (next.length === 6) void verify(next)
+              }}
+            />
+          </Field>
+          {alert}
+          <Button type="submit" variant="accent" className="w-full" loading={busy} disabled={code.length !== 6}>Confirm code</Button>
+          <div className="flex items-center justify-between text-xs">
+            <button type="button" onClick={() => { setStep('email'); setError('') }} className="font-bold text-muted hover:text-ink">Use another email</button>
+            {wait > 0 ? <span className="text-muted tabular-nums">Resend in {wait}s</span> : <button type="button" disabled={busy} onClick={() => void sendCode()} className="font-bold text-brand hover:underline">Resend code</button>}
+          </div>
+        </form>
+      )}
+      {step === 'password' && (
+        <form onSubmit={save} className="space-y-4">
+          <Field label="New password" hint="At least 8 characters"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" autoFocus /></Field>
+          <Field label="Confirm new password"><Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" /></Field>
+          {alert}
+          <Button type="submit" variant="accent" className="w-full" loading={busy}>Update password</Button>
+        </form>
+      )}
+      {step === 'done' && <p className="anim-rise rounded-xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">Password updated. Taking you to sign in…</p>}
     </Shell>
   )
 }

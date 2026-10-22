@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { createAccount, findAccountByEmail, findAccountById, peopleByIds, setRole, updateLogin } from '../../services/account.js'
 import { audit } from '../../services/audit.js'
+import { sendStaffInvite } from '../../services/emails.js'
 import { hashPassword, revokeAllRefreshTokens } from '../../services/auth.js'
 import { from, count, exec, maybe, rows, rpc, toHttpError } from '../../database/db.js'
 import { badRequest, conflict, notFound } from '../../utils/errors.js'
@@ -10,7 +11,7 @@ import { serializeOrder } from '../../utils/serializers.js'
 import { getSettings, saveSettings } from '../../services/settings.js'
 import { ORDER_SELECT } from '../../database/selects.js'
 import { actor, adminOnly } from '../../middleware/auth.js'
-import { renderInvoice } from '../orders.js'
+import { renderInvoiceHtml } from '../../services/invoice.js'
 import { DEFAULT_STAFF_PERMISSIONS, PERMISSIONS, PERMISSION_KEYS, PERMISSION_PRESETS, cleanPermissions, forgetPermissions } from '../../services/permissions.js'
 export const adminOpsRouter = Router()
 const statusEnum = z.enum(['PLACED', 'CONFIRMED', 'PACKED', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED', 'RETURNED'])
@@ -91,7 +92,7 @@ adminOpsRouter.get('/payments/webhooks', adminOnly, async (req, res) => {
 adminOpsRouter.get('/orders/:id/invoice', async (req, res) => {
   const order = await maybe(from('Order').select(ORDER_SELECT).eq('id', String(req.params.id)).maybeSingle())
   if (!order) throw notFound('Order')
-  res.type('html').send(renderInvoice(order))
+  res.type('html').send(renderInvoiceHtml(serializeOrder(order), await getSettings()))
 })
 adminOpsRouter.patch('/orders/:id/status', async (req, res) => {
   const id = String(req.params.id)
@@ -286,6 +287,7 @@ adminOpsRouter.post('/staff', adminOnly, async (req, res) => {
     passwordHash: await hashPassword(data.password),
   })
   if (data.role === 'STAFF' && data.permissions) await exec(from('Staff').update({ permissions: cleanPermissions(data.permissions) }).eq('loginId', user.id))
+  void sendStaffInvite({ ...user, name: data.name })
   await audit(actor(req).id, 'staff.create', 'Login', user.id, {
     role: data.role,
     permissions: data.permissions,

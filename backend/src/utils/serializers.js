@@ -90,6 +90,8 @@ export function serializeOrder(order) {
       unitPrice: item.unitPrice,
       mrp: item.mrp,
       quantity: item.quantity,
+      hsnCode: item.hsnCode ?? null,
+      gstPercent: item.gstPercent ?? null,
     })),
     subtotal: order.subtotal,
     offerDiscount: order.offerDiscount,

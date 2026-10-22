@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
 import jwt from 'jsonwebtoken'
 import { findAccountById } from './account.js'
 import { exec, from, maybe, rows } from '../database/db.js'
@@ -104,6 +104,47 @@ export const revokeRefreshToken = (token) => {
 }
 export const revokeAllRefreshTokens = (userId) => exec(from('RefreshToken').delete().eq('userId', userId))
 const RESET_MINUTES = 30
+export const CODE_MINUTES = 10
+export const CODE_TRIES = 5
+const codeHash = (userId, code) => sha(`reset-code:${userId}:${code}`)
+
+/** A fresh 6-digit code for "Forgot password". Any older unused code or link for this person stops working. */
+export async function createResetCode(userId) {
+  const code = String(randomInt(0, 1_000_000)).padStart(6, '0')
+  await exec(from('PasswordReset').delete().eq('userId', userId).is('usedAt', null))
+  await exec(
+    from('PasswordReset').insert({
+      userId,
+      kind: 'code',
+      tokenHash: codeHash(userId, code),
+      expiresAt: new Date(Date.now() + CODE_MINUTES * 60000).toISOString(),
+    }),
+  )
+  return code
+}
+
+/**
+ * Checks a code. Right: the code is used up and a one-time reset token (30 minutes) is returned.
+ * Wrong: counts a try; after 5 the code stops working. Returns { token } or { error, triesLeft? }.
+ */
+export async function verifyResetCode(userId, code) {
+  const record = await maybe(
+    from('PasswordReset').select('id, tokenHash, expiresAt, attempts').eq('userId', userId).eq('kind', 'code').is('usedAt', null).order('createdAt', { ascending: false }).limit(1).maybeSingle(),
+  )
+  if (!record || new Date(record.expiresAt) < new Date()) return { error: 'expired' }
+  if (record.attempts >= CODE_TRIES) return { error: 'locked' }
+  const given = Buffer.from(codeHash(userId, code))
+  const expected = Buffer.from(record.tokenHash)
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+    const attempts = record.attempts + 1
+    await exec(from('PasswordReset').update({ attempts }).eq('id', record.id))
+    return attempts >= CODE_TRIES ? { error: 'locked' } : { error: 'wrong', triesLeft: CODE_TRIES - attempts }
+  }
+  const claimed = await rows(from('PasswordReset').update({ usedAt: new Date().toISOString() }).eq('id', record.id).is('usedAt', null).select('id'))
+  if (claimed.length !== 1) return { error: 'expired' }
+  return { token: await createPasswordReset(userId) }
+}
+
 export async function createPasswordReset(userId) {
   const token = randomBytes(32).toString('hex')
   await exec(from('PasswordReset').delete().eq('userId', userId).is('usedAt', null))
@@ -117,7 +158,8 @@ export async function createPasswordReset(userId) {
   return token
 }
 export async function consumePasswordReset(token) {
-  const record = await maybe(from('PasswordReset').select('id, userId, expiresAt, usedAt').eq('tokenHash', sha(token)).maybeSingle())
+  // Only one-time reset tokens, never an emailed code: a code must go through verifyResetCode and its try limit.
+  const record = await maybe(from('PasswordReset').select('id, userId, expiresAt, usedAt').eq('tokenHash', sha(token)).neq('kind', 'code').maybeSingle())
   if (!record || record.usedAt || new Date(record.expiresAt) < new Date()) return null
   const claimed = await rows(
     from('PasswordReset')

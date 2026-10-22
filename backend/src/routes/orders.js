@@ -6,10 +6,12 @@ import { changeStatus, createOrder, failPayment, loadOrder, markPaid } from '../
 import { exec, from, one, maybe, rows } from '../database/db.js'
 import { ORDER_SELECT } from '../database/selects.js'
 import { paymentProvider } from '../services/payments.js'
-import { orderCode, serializeOrder } from '../utils/serializers.js'
+import { serializeOrder } from '../utils/serializers.js'
 import { env } from '../config/env.js'
 import { actor, requireAuth } from '../middleware/auth.js'
 import { upiIdSchema } from './wallet.js'
+import { renderInvoiceHtml } from '../services/invoice.js'
+import { getSettings } from '../services/settings.js'
 export const ordersRouter = Router()
 const checkoutSchema = z.object({
   items: z
@@ -117,7 +119,7 @@ ordersRouter.post('/orders/:code/cancel', requireAuth, async (req, res) => {
 })
 ordersRouter.get('/orders/:code/invoice', requireAuth, async (req, res) => {
   const order = await loadOwned(req, String(req.params.code))
-  res.type('html').send(renderInvoice(order))
+  res.type('html').send(renderInvoiceHtml(serializeOrder(order), await getSettings()))
 })
 ordersRouter.get('/track/:code', async (req, res) => {
   const contact = z.string().trim().min(3).parse(req.query.contact)
@@ -272,27 +274,3 @@ export async function paymentWebhook(req, res) {
     received: true,
   })
 }
-function renderInvoice(order) {
-  const esc = (value) =>
-    value.replace(
-      /[&<>"']/g,
-      (char) =>
-        ({
-          '&': '&amp;',
-          '<': '&lt;',
-          '>': '&gt;',
-          '"': '&quot;',
-          "'": '&#39;',
-        })[char],
-    )
-  const lines = order.items
-    .map((item) => `<tr><td>${esc(item.name)} (${esc(item.size)})</td><td>${item.quantity}</td><td>₹${item.unitPrice}</td><td>₹${item.unitPrice * item.quantity}</td></tr>`)
-    .join('')
-  return `<!doctype html><meta charset="utf-8"><title>Invoice ${orderCode(order.number)}</title>
-<style>body{font:14px system-ui;max-width:720px;margin:32px auto;padding:0 16px;color:#152033}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{padding:8px;border-bottom:1px solid #e5ebf3;text-align:left}.r{text-align:right}h1{margin:0}</style>
-<h1>ClickMart</h1><p>Invoice ${orderCode(order.number)} · ${new Date(order.createdAt).toDateString()}</p>
-<p><b>${esc(order.customerName)}</b><br>${esc(order.addressLine)}, ${esc(order.city)}, ${esc(order.state)} ${esc(order.pin)}<br>${esc(order.phone)}</p>
-<table><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>${lines}</table>
-<p class="r">Subtotal ₹${order.subtotal}<br>Offers −₹${order.offerDiscount}<br>Coupon −₹${order.discount}<br>Shipping ₹${order.shipping}<br><b>Total ₹${order.total}</b></p>`
-}
-export { renderInvoice }

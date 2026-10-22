@@ -75,10 +75,12 @@ export function createApp() {
   const strict = (max) => limit(max)
   const authFailures = limit(20, {
     skipSuccessfulRequests: true,
-    skip: (req) => req.path === '/refresh' || req.path === '/logout' || req.path === '/forgot-password',
+    skip: (req) => req.path === '/refresh' || req.path === '/logout' || req.path === '/forgot-password' || req.path === '/verify-reset-code',
   })
   api.use('/auth/refresh', limit(300))
   api.use('/auth/forgot-password', strict(8))
+  // Codes also lock after 5 wrong tries each; this caps guessing across many requested codes.
+  api.use('/auth/verify-reset-code', strict(30))
   api.use('/auth', authFailures, authRouter)
   api.use('/checkout', strict(60))
   api.use('/geo', limit(300), geoRouter)

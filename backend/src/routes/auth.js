@@ -4,8 +4,10 @@ import {
   ACCESS_COOKIE,
   REFRESH_COOKIE,
   accessCookieOptions,
+  CODE_MINUTES,
   consumePasswordReset,
-  createPasswordReset,
+  createResetCode,
+  verifyResetCode,
   burnTime,
   clearAccessCookieOptions,
   hashPassword,
@@ -21,8 +23,7 @@ import {
 } from '../services/auth.js'
 import { createAccount, findAccountByEmail, findAccountById, updateLogin } from '../services/account.js'
 import { badRequest, conflict, unauthorized } from '../utils/errors.js'
-import { env } from '../config/env.js'
-import { sendMail } from '../services/mailer.js'
+import { sendPasswordChanged, sendPasswordResetCode, sendWelcome } from '../services/emails.js'
 import { actor, requireAuth } from '../middleware/auth.js'
 import { permissionsFor } from '../services/permissions.js'
 export const publicUser = (user, permissions) => ({
@@ -76,6 +77,7 @@ authRouter.post('/register', async (req, res) => {
     passwordHash: await hashPassword(data.password),
     role: 'CUSTOMER',
   })
+  void sendWelcome(user)
   res.status(201).json(await startSession(res, user))
 })
 authRouter.post('/login', async (req, res) => {
@@ -137,6 +139,7 @@ authRouter.post('/change-password', requireAuth, async (req, res) => {
     passwordHash: await hashPassword(data.newPassword),
   })
   await revokeAllRefreshTokens(user.id)
+  void sendPasswordChanged(user)
   clearSessionCookies(res)
   res.status(204).end()
 })
@@ -148,17 +151,28 @@ authRouter.post('/forgot-password', async (req, res) => {
     .parse(req.body)
   const user = await findAccountByEmail(data.email)
   if (user && !user.isBlocked) {
-    const token = await createPasswordReset(user.id)
-    const base = user.role === 'CUSTOMER' ? env.STORE_URL : env.ADMIN_URL
-    void sendMail(
-      user.email,
-      'Reset your ClickMart password',
-      `Hi ${user.name},\n\nUse this link to choose a new password. It works once and expires in 30 minutes:\n${base}/reset-password?token=${token}\n\nIf you did not ask for this, you can ignore this email. Your password has not changed.\n\n— ClickMart`,
-    )
+    const code = await createResetCode(user.id)
+    void sendPasswordResetCode(user, code, CODE_MINUTES)
   }
+  // Same answer whether or not the email has an account, so nobody can test which emails are registered.
   res.json({
-    message: 'If that email has an account, a reset link is on its way.',
+    message: 'If that email has an account, we have sent it a 6-digit code.',
+    expiresInMinutes: CODE_MINUTES,
   })
+})
+authRouter.post('/verify-reset-code', async (req, res) => {
+  const data = z
+    .object({
+      email: z.string().trim().toLowerCase().email(),
+      code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code from the email'),
+    })
+    .parse(req.body)
+  const user = await findAccountByEmail(data.email)
+  const result = user && !user.isBlocked ? await verifyResetCode(user.id, data.code) : { error: 'wrong', triesLeft: undefined }
+  if (result.token) return res.json({ resetToken: result.token })
+  if (result.error === 'expired') throw badRequest('This code has expired or was already used. Request a new one.')
+  if (result.error === 'locked') throw badRequest('Too many wrong tries. Request a new code.')
+  throw badRequest(result.triesLeft ? `That code is not right. ${result.triesLeft} ${result.triesLeft === 1 ? 'try' : 'tries'} left.` : 'That code is not right.')
 })
 authRouter.post('/reset-password', async (req, res) => {
   const data = z
@@ -173,6 +187,8 @@ authRouter.post('/reset-password', async (req, res) => {
     passwordHash: await hashPassword(data.password),
   })
   await revokeAllRefreshTokens(userId)
+  const account = await findAccountById(userId)
+  if (account) void sendPasswordChanged(account)
   res.json({
     message: 'Password updated. You can log in with it now.',
   })

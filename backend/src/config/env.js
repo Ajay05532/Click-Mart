@@ -19,11 +19,17 @@ const schema = z.object({
   PAYMENT_WEBHOOK_SECRET: z.string().default('dev-webhook-secret'),
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
+  // Email. RESEND_API_KEY wins; otherwise SMTP_URL; with neither, emails are printed in the API console.
+  RESEND_API_KEY: z.string().startsWith('re_', 'RESEND_API_KEY starts with re_').optional(),
   SMTP_URL: z.string().optional(),
+  // Where customer replies go. Resend's test sender cannot receive mail, so point this at a real inbox.
+  MAIL_REPLY_TO: z.string().email().optional(),
   // Reply-by-email for support. Both are needed to switch it on (see docs in README).
   SUPPORT_INBOUND_EMAIL: z.string().email().optional(),
   SUPPORT_INBOUND_SECRET: z.string().min(16).optional(),
-  MAIL_FROM: z.string().default('ClickMart <orders@clickmart.local>'),
+  // Resend's shared test sender works before your domain is verified (it only delivers to your own Resend
+  // account email). After verifying theclickmart.com, use e.g. "ClickMart <orders@theclickmart.com>".
+  MAIL_FROM: z.string().default('ClickMart <onboarding@resend.dev>'),
   STORE_URL: z.string().default('http://localhost:5173'),
   ADMIN_URL: z.string().default('http://localhost:5175'),
 })

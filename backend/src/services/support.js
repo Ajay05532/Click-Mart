@@ -4,7 +4,7 @@ import { env } from '../config/env.js'
 import { exec, from, maybe, rows, rpc } from '../database/db.js'
 import { badRequest } from '../utils/errors.js'
 import { orderCode } from '../utils/serializers.js'
-import { sendMail } from './mailer.js'
+import { noticeEmail } from './emails.js'
 import { getSettings } from './settings.js'
 
 export const ticketCategories = {
@@ -268,25 +268,40 @@ export async function receiveEmailReply(payload) {
 
 /* ---------------- Emails ---------------- */
 
-const replyNote = () => (inboundEnabled() ? '\nYou can also just reply to this email.\n' : '')
+const replyNote = () => (inboundEnabled() ? 'You can also just reply to this email.' : undefined)
 
 export async function notifyTicketCreated(ticket) {
   const hours = SLA_HOURS[ticket.priority] ?? 24
-  await sendMail(
-    ticket.email,
-    `We got your request · ${ticketCode(ticket.number)}`,
-    `Hi ${ticket.name.split(' ')[0]},\n\nThanks for contacting ClickMart. Your request is logged as ${ticketCode(ticket.number)}.\n\nSubject: ${ticket.subject}\n\nWe usually reply within ${hours <= 24 ? `${hours} hours` : '2 days'}. You can follow the conversation and add details here:\n${link(`/help/tickets/${ticketCode(ticket.number)}`)}\n${replyNote()}\nClickMart Support`,
-    { replyTo: replyToFor(ticket) },
-  )
+  const code = ticketCode(ticket.number)
+  await noticeEmail({
+    to: ticket.email,
+    subject: `We got your request · ${code}`,
+    heading: 'We got your request',
+    preheader: `${code} · ${ticket.subject}`,
+    paragraphs: [
+      `Hi ${ticket.name.split(' ')[0]},`,
+      `Thanks for contacting ClickMart. Your request is logged as ${code}.`,
+      `Subject: ${ticket.subject}`,
+      `We usually reply within ${hours <= 24 ? `${hours} hours` : '2 days'}.${ticket.userId ? ' You can follow the conversation and add details on the request page.' : ' Log in or create an account with this email to follow the conversation online.'}`,
+    ],
+    cta: { label: 'Open your request', url: link(`/help/tickets/${code}`) },
+    note: replyNote(),
+    replyTo: replyToFor(ticket),
+  })
 }
 
 export async function notifyStaffReply(ticket, body) {
-  await sendMail(
-    ticket.email,
-    `New reply on ${ticketCode(ticket.number)} · ${ticket.subject}`,
-    `Hi ${ticket.name.split(' ')[0]},\n\nOur team replied to your request:\n\n${body}\n\nReply or see the full conversation here:\n${link(`/help/tickets/${ticketCode(ticket.number)}`)}\n${replyNote()}\nClickMart Support`,
-    { replyTo: replyToFor(ticket) },
-  )
+  const code = ticketCode(ticket.number)
+  await noticeEmail({
+    to: ticket.email,
+    subject: `New reply on ${code} · ${ticket.subject}`,
+    heading: 'Our team replied',
+    preheader: body.slice(0, 120),
+    paragraphs: [`Hi ${ticket.name.split(' ')[0]},`, `Here is our reply to ${code} (${ticket.subject}):`, body],
+    cta: { label: 'See the full conversation', url: link(`/help/tickets/${code}`) },
+    note: replyNote(),
+    replyTo: replyToFor(ticket),
+  })
 }
 
 /** One email to the support inbox listing tickets that have just gone past their reply target. */
@@ -296,10 +311,12 @@ export async function alertOverdueTickets() {
   const settings = await getSettings()
   const admin = env.ADMIN_URL.replace(/\/$/, '')
   const list = tickets.map((ticket) => `  ${ticketCode(ticket.number)} · ${ticket.priority} · ${ticket.subject} (${ticket.name})\n  ${admin}/support/${ticket.id}`).join('\n')
-  await sendMail(
-    settings.supportEmail,
-    `${tickets.length} support ${tickets.length === 1 ? 'ticket is' : 'tickets are'} past the reply target`,
-    `These customers are still waiting for a first reply or an answer:\n\n${list}\n\nOpen the Support inbox, filter by Overdue, and reply or reassign.`,
-  )
+  await noticeEmail({
+    to: settings.supportEmail,
+    subject: `${tickets.length} support ${tickets.length === 1 ? 'ticket is' : 'tickets are'} past the reply target`,
+    heading: 'Tickets waiting too long',
+    paragraphs: ['These customers are still waiting for a first reply or an answer:', list, 'Open the Support inbox, filter by Overdue, and reply or reassign.'],
+    cta: { label: 'Open the Support inbox', url: `${admin}/support?view=overdue` },
+  })
   return tickets.length
 }

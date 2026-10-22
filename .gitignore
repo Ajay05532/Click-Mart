@@ -3,6 +3,8 @@ node_modules/
 
 # Builds
 dist/
+clickmart-storefront.zip
+clickmart-admin.zip
 dist-ssr/
 build/
 *.tsbuildinfo

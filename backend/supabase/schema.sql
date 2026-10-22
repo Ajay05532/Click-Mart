@@ -801,6 +801,9 @@ ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "gstPercent" INTEGER NOT 
 ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "countryOfOrigin" TEXT NOT NULL DEFAULT 'India';
 ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "ingredients" TEXT NOT NULL DEFAULT '';
 ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "shelfLifeDays" INTEGER;
+-- Password reset by emailed code: which kind of row, and how many wrong tries.
+ALTER TABLE account."PasswordReset" ADD COLUMN IF NOT EXISTS "kind" TEXT NOT NULL DEFAULT 'link';
+ALTER TABLE account."PasswordReset" ADD COLUMN IF NOT EXISTS "attempts" INTEGER NOT NULL DEFAULT 0;
 -- Search listing text. Empty means the shop writes it from the name, price and description.
 ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "metaTitle" TEXT NOT NULL DEFAULT '';
 ALTER TABLE catalog."Product" ADD COLUMN IF NOT EXISTS "metaDescription" TEXT NOT NULL DEFAULT '';

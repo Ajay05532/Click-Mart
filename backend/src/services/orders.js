@@ -1,6 +1,6 @@
 import { badRequest, notFound } from '../utils/errors.js'
 import { exec, from, maybe, one, rpc } from '../database/db.js'
-import { sendMail } from './mailer.js'
+import { sendOrderConfirmation, sendOrderStatus, sendRefundIssued } from './emails.js'
 import { buildQuote } from './pricing.js'
 import { paymentProvider } from './payments.js'
 import { getSettings } from './settings.js'
@@ -113,7 +113,7 @@ export async function createOrder(input, userId) {
         ...paymentDetail,
       }),
     )
-    void notifyOrder(created.id, 'Order confirmed')
+    void sendOrderConfirmation(created.id)
   }
   await exec(
     from('Order')
@@ -133,7 +133,7 @@ export async function markPaid(providerOrderId, providerPaymentId, raw) {
     p_payment_id: providerPaymentId,
     p_raw: raw ?? null,
   })
-  if (result.changed) void notifyOrder(result.orderId, 'Payment received')
+  if (result.changed) void sendOrderConfirmation(result.orderId)
   return result
 }
 export const failPayment = (orderId, note = 'Payment failed') =>
@@ -151,16 +151,6 @@ const defaultNote = {
   CANCELLED: 'Order cancelled',
   RETURNED: 'Order returned',
 }
-const statusSubject = {
-  PLACED: 'Order placed',
-  CONFIRMED: 'Order confirmed',
-  PACKED: 'Your order is packed',
-  SHIPPED: 'Your order has shipped',
-  OUT_FOR_DELIVERY: 'Your order is out for delivery',
-  DELIVERED: 'Your order was delivered',
-  CANCELLED: 'Your order was cancelled',
-  RETURNED: 'Your return was received',
-}
 export async function changeStatus(orderId, to, opts = {}) {
   const result = await rpc('change_order_status', {
     p_order_id: orderId,
@@ -170,11 +160,12 @@ export async function changeStatus(orderId, to, opts = {}) {
     p_tracking: opts.trackingNumber ?? null,
   })
   if (to === 'CANCELLED' && result.paymentStatus === 'PAID' && result.paymentMethod !== 'COD') {
-    await refundOrder(orderId).catch((error) => console.error('auto-refund failed', error))
+    // The cancellation email already explains the refund, so no separate refund email here.
+    await refundOrder(orderId, { notify: false }).catch((error) => console.error('auto-refund failed', error))
   }
-  void notifyOrder(orderId, statusSubject[to])
+  void sendOrderStatus(orderId, to)
 }
-export async function refundOrder(orderId) {
+export async function refundOrder(orderId, { notify = true } = {}) {
   const order = await maybe(from('Order').select('id, total, paymentStatus, payments:Payment(*)').eq('id', orderId).maybeSingle())
   if (!order) throw notFound('Order')
   if (order.paymentStatus !== 'PAID') throw badRequest('Only paid orders can be refunded')
@@ -183,17 +174,7 @@ export async function refundOrder(orderId) {
   await rpc('finish_refund', {
     p_order_id: orderId,
   })
-}
-export async function notifyOrder(orderId, subject) {
-  const order = await maybe(from('Order').select(ORDER_SELECT).eq('id', orderId).maybeSingle())
-  if (!order) return
-  const items = order.items
-  const lines = items.map((item) => `  - ${item.name} (${item.size}) x ${item.quantity}  ₹${item.unitPrice * item.quantity}`).join('\n')
-  await sendMail(
-    order.email,
-    `${subject} · ${orderCode(order.number)}`,
-    `Hi ${order.customerName},\n\n${subject}.\nOrder ${orderCode(order.number)} · Status: ${String(order.status).replaceAll('_', ' ')}\n\n${lines}\n\nTotal: ₹${order.total}\nTrack it any time with your order ID and phone number.\n\n— ClickMart`,
-  )
+  if (notify) void sendRefundIssued(orderId)
 }
 export const expireStaleOrders = (minutes = 30) =>
   rpc('expire_stale_orders', {
