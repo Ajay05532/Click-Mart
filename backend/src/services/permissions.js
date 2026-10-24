@@ -40,7 +40,7 @@ export const ROUTE_PERMISSIONS = [
   [/^\/support(\/|$)/, 'support'],
 ]
 /** Admin paths that need no permission beyond being staff, or that guard themselves. */
-export const UNGATED_ADMIN_PATHS = ['/summary', '/uploads', '/settings', '/staff', '/audit', '/analytics', '/coupons', '/payments/webhooks', '/reports']
+export const UNGATED_ADMIN_PATHS = ['/summary', '/uploads', '/settings', '/staff', '/audit', '/analytics', '/coupons', '/payments/webhooks', '/reports', '/nimbuspost/warehouses']
 
 export const requiredPermission = (path) => ROUTE_PERMISSIONS.find(([pattern]) => pattern.test(path))?.[1] ?? null
 

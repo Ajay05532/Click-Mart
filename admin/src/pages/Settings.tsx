@@ -4,7 +4,7 @@ import { api } from '../api.ts'
 import { AdminOnly } from '../Layout.tsx'
 import { inr } from '../format.ts'
 import { useAction } from '../hooks.ts'
-import { Badge, Button, Card, ErrorState, Field, Input, PageHeader, PageLoader, Select, Switch, Textarea } from '../ui.tsx'
+import { Badge, Button, Card, ErrorState, Field, Input, Modal, PageHeader, PageLoader, Select, Switch, Textarea, errorMessage } from '../ui.tsx'
 
 type Settings = {
   storeName: string
@@ -22,6 +22,7 @@ type Settings = {
   nonServiceablePincodes: string[]
   nonServiceableStates: string[]
   pickupPincode: string
+  nimbuspostWarehouseId: string
 }
 type PublicSettings = { paymentProvider: 'mock' | 'razorpay'; paymentTestMode: boolean }
 type NumberKey = 'freeShippingThreshold' | 'shippingFee' | 'codMaxOrder' | 'lowStockDefault'
@@ -127,6 +128,122 @@ const StateTagField = ({ label, values, onChange }: { label: string; values: str
   <TagField label={label} values={values} onChange={onChange} placeholder="Type a state, then Enter" normalize={(raw) => raw.trim().replace(/,$/, '') || null} options={STATES} />
 )
 
+type Warehouse = { warehouse_id: string; warehouse_code?: string; name: string; status: string }
+
+/** Which NimbusPost warehouse orders are booked and picked up from. Needed before any order can be booked;
+ * the account starts with none, so this also offers the OTP flow NimbusPost requires to add one. */
+function WarehousePicker({ value, onChange, pickupPincode }: { value: string; onChange: (value: string) => void; pickupPincode: string }) {
+  const [adding, setAdding] = useState(false)
+  const list = useQuery({ queryKey: ['nimbuspost-warehouses'], queryFn: () => api<{ items: Warehouse[] }>('/admin/nimbuspost/warehouses').then((r) => r.items) })
+  const warehouses = list.data ?? []
+  return (
+    <div>
+      <span className="text-[13px] font-bold text-ink-soft">NimbusPost pickup warehouse</span>
+      {list.isLoading ? (
+        <p className="mt-1.5 text-xs text-muted">Loading your warehouses…</p>
+      ) : list.error ? (
+        <p className="mt-1.5 text-xs text-rose-600">{errorMessage(list.error)}</p>
+      ) : warehouses.length === 0 ? (
+        <p className="mt-1.5 text-xs text-muted">No warehouses on your NimbusPost account yet. Orders can't be booked until you add one.</p>
+      ) : (
+        <Select className="mt-1.5 max-w-xs" value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">Choose a warehouse</option>
+          {warehouses.map((w) => (
+            <option key={w.warehouse_id} value={w.warehouse_id}>{w.name}{w.warehouse_code ? ` (${w.warehouse_code})` : ''}</option>
+          ))}
+        </Select>
+      )}
+      <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => setAdding(true)}>Add a warehouse</Button>
+      {adding && (
+        <AddWarehouseModal
+          pickupPincode={pickupPincode}
+          onClose={() => setAdding(false)}
+          onCreated={(warehouseId) => {
+            void list.refetch()
+            onChange(warehouseId)
+            setAdding(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function AddWarehouseModal({ pickupPincode, onClose, onCreated }: { pickupPincode: string; onClose: () => void; onCreated: (warehouseId: string) => void }) {
+  const [step, setStep] = useState<'details' | 'otp'>('details')
+  const [form, setForm] = useState({ name: '', address: '', pincode: pickupPincode, city: '', state: '', contactName: '', contactPhone: '' })
+  const [otp, setOtp] = useState('')
+  const [wait, setWait] = useState(0)
+  const [error, setError] = useState('')
+
+  const sendOtp = useAction(() => api<{ otp_sent: boolean; resend_in_sec: number }>('/admin/nimbuspost/warehouses/otp/send', { method: 'POST', body: { phone: form.contactPhone, purpose: 'pickup' } }), {
+    onDone: (result) => {
+      setStep('otp')
+      setWait(result.resend_in_sec || 30)
+      setError('')
+    },
+  })
+  const verifyOtp = useAction(() => api<{ verified: boolean; verification_id: string }>('/admin/nimbuspost/warehouses/otp/verify', { method: 'POST', body: { phone: form.contactPhone, otp, purpose: 'pickup' } }), {
+    onDone: (result) =>
+      create.mutate({
+        name: form.name,
+        address: form.address,
+        pincode: form.pincode,
+        city: form.city,
+        state: form.state,
+        contactName: form.contactName,
+        contactPhone: form.contactPhone,
+        verificationId: result.verification_id,
+      }),
+  })
+  const create = useAction((body: Record<string, string>) => api<{ warehouse_id: string }>('/admin/nimbuspost/warehouses', { method: 'POST', body }), {
+    success: 'Warehouse added',
+    onDone: (result) => onCreated(result.warehouse_id),
+  })
+
+  const detailsValid = form.name.trim() && form.address.trim() && /^\d{6}$/.test(form.pincode) && form.city.trim() && form.state.trim() && form.contactName.trim() && /^[6-9]\d{9}$/.test(form.contactPhone)
+
+  return (
+    <Modal title={step === 'details' ? 'Add a pickup warehouse' : 'Confirm the contact phone'} onClose={onClose}>
+      {step === 'details' ? (
+        <div className="space-y-3">
+          <Field label="Warehouse name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Main warehouse" /></Field>
+          <Field label="Address"><Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="PIN code"><Input value={form.pincode} inputMode="numeric" maxLength={6} onChange={(e) => setForm({ ...form, pincode: e.target.value.replace(/\D/g, '') })} /></Field>
+            <Field label="City"><Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></Field>
+          </div>
+          <Field label="State"><Input value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} placeholder="Bihar" /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Pickup contact name"><Input value={form.contactName} onChange={(e) => setForm({ ...form, contactName: e.target.value })} /></Field>
+            <Field label="Contact mobile"><Input value={form.contactPhone} inputMode="numeric" maxLength={10} onChange={(e) => setForm({ ...form, contactPhone: e.target.value.replace(/\D/g, '') })} /></Field>
+          </div>
+          <p className="text-xs text-muted">NimbusPost will text a code to this number to confirm it's a real pickup contact.</p>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button variant="accent" disabled={!detailsValid} loading={sendOtp.isPending} onClick={() => sendOtp.mutate(undefined)}>Send code</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-sm text-muted">Enter the code texted to {form.contactPhone}.</p>
+          <Input value={otp} inputMode="numeric" maxLength={8} autoFocus onChange={(e) => { setOtp(e.target.value.replace(/\D/g, '')); setError('') }} placeholder="123456" className="max-w-40 text-center font-mono text-lg tracking-widest" />
+          {error && <p className="text-sm font-semibold text-rose-600">{error}</p>}
+          <div className="flex items-center justify-between pt-1">
+            <button type="button" disabled={wait > 0 || sendOtp.isPending} onClick={() => sendOtp.mutate(undefined)} className="text-sm font-bold text-brand disabled:text-muted">
+              {wait > 0 ? `Resend in ${wait}s` : 'Resend code'}
+            </button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button variant="accent" disabled={otp.length < 4} loading={verifyOtp.isPending || create.isPending} onClick={() => verifyOtp.mutate(undefined)}>Verify & add</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 function SettingsForm({ initial, nimbuspostEnabled }: { initial: Settings; nimbuspostEnabled: boolean }) {
   const start = toForm(initial)
   const [f, setF] = useState<Form>(start)
@@ -228,6 +345,11 @@ function SettingsForm({ initial, nimbuspostEnabled }: { initial: Settings; nimbu
             <Field label="Pickup PIN code" error={errors.pickupPincode} hint="Where NimbusPost collects your orders from" className="mt-3 max-w-56">
               <Input value={f.pickupPincode} inputMode="numeric" maxLength={6} onChange={(e) => set('pickupPincode', e.target.value.replace(/\D/g, ''))} placeholder="804453" aria-invalid={!!errors.pickupPincode} />
             </Field>
+            {nimbuspostEnabled && (
+              <div className="mt-3">
+                <WarehousePicker value={f.nimbuspostWarehouseId} onChange={(v) => set('nimbuspostWarehouseId', v)} pickupPincode={f.pickupPincode} />
+              </div>
+            )}
           </div>
           <div className="mt-5 border-t border-line pt-4">
             <p className="text-sm font-bold">Areas we don't deliver to</p>

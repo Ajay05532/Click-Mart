@@ -16,6 +16,17 @@ type DeliveryRate = {
   cheapest: { courierId: string; courierName: string; courierType: string; tatDays: number | null; ratePaise: number } | null
 }
 
+type NimbusPostOrder = {
+  booked: boolean
+  orderId?: string
+  orderNumber?: string
+  status?: string
+  ewayBillNumber?: string | null
+  awb?: string | null
+  courierName?: string | null
+  labelUrl?: string | null
+}
+
 const statusTone: Record<OrderStatus, Tone> = { PLACED: 'gray', CONFIRMED: 'blue', PACKED: 'blue', SHIPPED: 'orange', OUT_FOR_DELIVERY: 'orange', DELIVERED: 'green', CANCELLED: 'red', RETURNED: 'red' }
 export const OrderStatusBadge = ({ status }: { status: OrderStatus }) => <Badge tone={statusTone[status]}>{label(status)}</Badge>
 const payTone = { PENDING: 'orange', PAID: 'green', FAILED: 'red', REFUNDED: 'gray' } as const
@@ -192,6 +203,7 @@ function OrderDrawer({ id, onClose }: { id: string; onClose: () => void }) {
           </div>
 
           <DeliveryRateCard orderId={id} />
+          <NimbusPostBookingCard orderId={id} />
 
           <section>
             <h3 className="text-xs font-bold tracking-wider text-muted uppercase">Timeline</h3>
@@ -250,6 +262,80 @@ function DeliveryRateCard({ orderId }: { orderId: string }) {
         </div>
       )}
     </section>
+  )
+}
+
+/** Books, tracks and cancels this order's real NimbusPost order — separate from the delivery-rate quote above. */
+function NimbusPostBookingCard({ orderId }: { orderId: string }) {
+  const { confirm } = useUi()
+  const [addingEway, setAddingEway] = useState(false)
+  const query = useQuery({ queryKey: ['order-nimbuspost', orderId], queryFn: () => api<NimbusPostOrder>(`/admin/orders/${orderId}/nimbuspost`) })
+  const book = useAction(() => api<{ order_id: string }>(`/admin/orders/${orderId}/nimbuspost/create`, { method: 'POST' }), { success: 'Order booked with NimbusPost', invalidate: ['order-nimbuspost'] })
+  const cancel = useAction((reason: string) => api(`/admin/orders/${orderId}/nimbuspost/cancel`, { method: 'POST', body: { reason: reason || undefined } }), {
+    success: 'NimbusPost order cancelled',
+    invalidate: ['order-nimbuspost'],
+  })
+  const np = query.data
+
+  return (
+    <section className="rounded-xl border border-line p-4 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-xs font-bold tracking-wider text-muted uppercase">NimbusPost order</h3>
+        {np?.booked && np.status && <Badge tone={np.status === 'cancelled' ? 'red' : np.status === 'delivered' ? 'green' : 'blue'}>{np.status.replace(/_/g, ' ')}</Badge>}
+      </div>
+      {query.isLoading ? (
+        <p className="mt-2 text-xs text-muted">Checking…</p>
+      ) : query.error ? (
+        <p className="mt-2 text-xs text-accent-dark">{errorMessage(query.error)}</p>
+      ) : !np?.booked ? (
+        <div className="mt-2">
+          <p className="text-xs text-muted">Not booked yet. Creates a real order on your NimbusPost account (you can still cancel it after).</p>
+          <Button size="sm" variant="accent" className="mt-2" loading={book.isPending} onClick={() => book.mutate(undefined)}>Book with NimbusPost</Button>
+        </div>
+      ) : (
+        <div className="mt-2 space-y-2">
+          <p className="text-xs text-muted">Order {np.orderNumber} · NimbusPost id <span className="font-mono">{np.orderId}</span></p>
+          {np.awb && <p className="text-xs"><span className="text-muted">AWB:</span> <span className="font-bold">{np.awb}</span>{np.courierName ? ` · ${np.courierName}` : ''}</p>}
+          {np.ewayBillNumber && <p className="text-xs"><span className="text-muted">E-way bill:</span> <span className="font-mono font-bold">{np.ewayBillNumber}</span></p>}
+          {np.status !== 'cancelled' && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button size="sm" variant="outline" onClick={() => void query.refetch()}>Refresh status</Button>
+              <Button size="sm" variant="outline" onClick={() => setAddingEway(true)}>{np.ewayBillNumber ? 'Update e-way bill' : 'Add e-way bill'}</Button>
+              <Button
+                size="sm"
+                variant="danger"
+                loading={cancel.isPending}
+                onClick={async () => {
+                  const ok = await confirm({ title: 'Cancel this NimbusPost order?', text: 'This cancels the real booking on your NimbusPost account.', confirmLabel: 'Cancel order', danger: true })
+                  if (ok) cancel.mutate('')
+                }}
+              >
+                Cancel NimbusPost order
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      {addingEway && <EwayBillModal orderId={orderId} current={np?.ewayBillNumber ?? ''} onClose={() => setAddingEway(false)} />}
+    </section>
+  )
+}
+
+function EwayBillModal({ orderId, current, onClose }: { orderId: string; current: string; onClose: () => void }) {
+  const [number, setNumber] = useState(current)
+  const [url, setUrl] = useState('')
+  const save = useAction(
+    () => api(`/admin/orders/${orderId}/nimbuspost/eway-bill`, { method: 'PATCH', body: { ewayBillNumber: number, documentUrl: url || undefined } }),
+    { success: 'E-way bill saved', invalidate: ['order-nimbuspost'], onDone: onClose },
+  )
+  const valid = /^\d{12}$/.test(number)
+  return (
+    <Modal title="E-way bill" onClose={onClose} footer={<><Button variant="outline" onClick={onClose}>Cancel</Button><Button variant="accent" disabled={!valid} loading={save.isPending} onClick={() => save.mutate(undefined)}>Save</Button></>}>
+      <div className="space-y-3">
+        <Field label="E-way bill number (12 digits)"><Input value={number} inputMode="numeric" maxLength={12} onChange={(e) => setNumber(e.target.value.replace(/\D/g, ''))} placeholder="331001234567" /></Field>
+        <Field label="Document link (optional)" hint="A public https link to the PDF/image, under 5 MB"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://..." /></Field>
+      </div>
+    </Modal>
   )
 }
 

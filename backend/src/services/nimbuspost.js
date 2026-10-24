@@ -87,3 +87,85 @@ export async function getDeliveryRates({ pickupPincode, deliveryPincode, payment
     cheapest: couriers[0] ?? null,
   }
 }
+
+/* ---------------- Warehouses ---------------- */
+// Adding a warehouse needs its pickup contact's phone OTP-verified first (send -> verify -> create);
+// there is no way around that in the API, so the admin UI walks through all three calls.
+
+export const listWarehouses = () => npFetch('/warehouses?limit=100')
+
+export const sendWarehouseOtp = (phone, purpose) => npFetch('/warehouses/otp/send', { method: 'POST', body: { phone, purpose } })
+
+export const verifyWarehouseOtp = (phone, otp, purpose) => npFetch('/warehouses/otp/verify', { method: 'POST', body: { phone, otp, purpose } })
+
+export function createWarehouse({ name, address, contactName, contactPhone, verificationId, isPrimary }) {
+  return npFetch('/warehouses', {
+    method: 'POST',
+    body: {
+      name,
+      address,
+      contact_person: { name: contactName, phone: contactPhone, phone_verified: true, verification_id: verificationId },
+      ...(isPrimary ? { is_primary: true } : {}),
+    },
+  })
+}
+
+/* ---------------- Orders ---------------- */
+// Order weight/dimensions are in KILOGRAMS and CM here (unlike /serviceability, which is grams) — easy to
+// mix up, so keep the two package helpers separate rather than sharing one with a unit flag.
+function orderPackageFor(weightGrams) {
+  const weight = Math.round((weightGrams / 1000) * 100) / 100
+  if (weightGrams <= 1000) return { weight, length: 20, width: 15, height: 8 }
+  if (weightGrams <= 3000) return { weight, length: 25, width: 20, height: 12 }
+  return { weight, length: 30, width: 25, height: 15 }
+}
+
+/**
+ * Creates a NimbusPost order (not yet booked with a courier) from a ClickMart order. Item prices must be
+ * tax-exclusive — `unitPriceInclGst` is divided back down by `gstPercent` here, since our own prices include
+ * GST (see "Money rules" in CLAUDE.md) but NimbusPost adds its own tax on top of a tax-exclusive price.
+ */
+export function createOrder({ orderNumber, paymentMode, warehouseId, shippingCharges, orderTotal, weightGrams, address, items }) {
+  const orderItems = items.map((item) => ({
+    name: item.name,
+    qty: item.quantity,
+    price: Math.round((item.unitPriceInclGst / (1 + (item.gstPercent ?? 0) / 100)) * 100) / 100,
+    sku: item.sku || undefined,
+    hsn: item.hsnCode || undefined,
+    tax_rate: item.gstPercent ?? 0,
+  }))
+  // The buyer's real COD amount is our own order total (already net of any coupon/offer discount), not a
+  // re-sum of items here — NimbusPost's own item/tax total ignores our discounts, so it is always >= this.
+  return npFetch('/orders', {
+    method: 'POST',
+    body: {
+      order_number: orderNumber,
+      order_type: 'b2c',
+      payment_mode: paymentMode,
+      ...(paymentMode === 'cod' ? { order_collectable_amount: orderTotal } : {}),
+      warehouse_id: warehouseId,
+      shipping_address: {
+        name: address.name,
+        email: address.email || undefined,
+        address: address.line,
+        pincode: Number(address.pin),
+        city: address.city,
+        state: address.state,
+        country: 'India',
+        phone: Number(address.phone),
+      },
+      items: orderItems,
+      package: orderPackageFor(weightGrams),
+      org_charges: shippingCharges > 0 ? { shipping_charges: shippingCharges } : undefined,
+    },
+  })
+}
+
+export const getOrder = (orderId) => npFetch(`/orders/${encodeURIComponent(orderId)}`)
+
+export const cancelOrder = (orderId, reason) => npFetch(`/orders/${encodeURIComponent(orderId)}/cancel`, { method: 'POST', body: { reason } })
+
+export const cancelOrders = (orderIds, reason) => npFetch('/orders/cancel', { method: 'POST', body: { order_ids: orderIds, reason } })
+
+export const setEwayBill = (orderId, ewayBillNumber, documentUrl) =>
+  npFetch(`/orders/${encodeURIComponent(orderId)}/eway-bill`, { method: 'PATCH', body: { eway_bill_number: ewayBillNumber, ...(documentUrl ? { eway_bill_document_url: documentUrl } : {}) } })

@@ -19,6 +19,9 @@ export const settingDefaults = {
   // The 6-digit PIN NimbusPost ships from (your pickup warehouse). Required for live serviceability checks;
   // without it, the checks above (an admin block-list) are the only ones that run.
   pickupPincode: '',
+  // The NimbusPost warehouse id (or code) orders are booked from. Required to create a NimbusPost order;
+  // pick one from GET /admin/nimbuspost/warehouses, or add one from Settings -> Delivery first.
+  nimbuspostWarehouseId: '',
 }
 /** Sample values an older schema.sql wrote. They are never real, so they fall back to the defaults above. */
 const OLD_SAMPLES = {

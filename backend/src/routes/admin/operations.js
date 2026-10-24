@@ -7,9 +7,21 @@ import { hashPassword, revokeAllRefreshTokens } from '../../services/auth.js'
 import { from, count, exec, maybe, rows, rpc, toHttpError } from '../../database/db.js'
 import { badRequest, conflict, notFound } from '../../utils/errors.js'
 import { changeStatus, loadOrder, refundOrder } from '../../services/orders.js'
-import { serializeOrder } from '../../utils/serializers.js'
+import { orderCode, serializeOrder } from '../../utils/serializers.js'
 import { getSettings, saveSettings } from '../../services/settings.js'
-import { getDeliveryRates, nimbuspostEnabled } from '../../services/nimbuspost.js'
+import {
+  cancelOrder as npCancelOrder,
+  cancelOrders as npCancelOrders,
+  createOrder as npCreateOrder,
+  createWarehouse,
+  getDeliveryRates,
+  getOrder as npGetOrder,
+  listWarehouses,
+  nimbuspostEnabled,
+  sendWarehouseOtp,
+  setEwayBill,
+  verifyWarehouseOtp,
+} from '../../services/nimbuspost.js'
 import { ORDER_SELECT } from '../../database/selects.js'
 import { actor, adminOnly } from '../../middleware/auth.js'
 import { renderInvoiceHtml } from '../../services/invoice.js'
@@ -79,25 +91,182 @@ adminOpsRouter.get('/orders/:id', async (req, res) => {
 })
 // Dry fruit packs are light; stand in for a pack whose weight was never filled in on the product.
 const DEFAULT_ITEM_WEIGHT_GRAMS = 250
+/** Total weight (grams) and each item's ProductVariant.sku, looked up in one go since OrderItem itself
+ * snapshots neither (sales and catalog are separate schemas, so this is always its own query). */
+async function weighOrderItems(items) {
+  const variantIds = [...new Set(items.map((item) => item.variantId).filter(Boolean))]
+  const variants = variantIds.length ? new Map((await rows(from('ProductVariant').select('id, weightGrams, sku').in('id', variantIds))).map((v) => [v.id, v])) : new Map()
+  const weightGrams = items.reduce((sum, item) => sum + (variants.get(item.variantId)?.weightGrams || DEFAULT_ITEM_WEIGHT_GRAMS) * item.quantity, 0)
+  return { weightGrams: Math.max(weightGrams, DEFAULT_ITEM_WEIGHT_GRAMS), variants }
+}
 adminOpsRouter.get('/orders/:id/delivery-rate', async (req, res) => {
   const order = await maybe(from('Order').select('pin, total, paymentMethod, items:OrderItem(variantId, quantity)').eq('id', String(req.params.id)).maybeSingle())
   if (!order) throw notFound('Order')
   if (!nimbuspostEnabled()) throw badRequest('NimbusPost is not connected. Add NIMBUSPOST_API_KEY and NIMBUSPOST_API_SECRET on the server.')
   const settings = await getSettings()
   if (!settings.pickupPincode) throw badRequest('Set a pickup PIN code first, in Settings -> Delivery.')
-  const variantIds = [...new Set(order.items.map((item) => item.variantId).filter(Boolean))]
-  const weights = variantIds.length ? new Map((await rows(from('ProductVariant').select('id, weightGrams').in('id', variantIds))).map((v) => [v.id, v.weightGrams])) : new Map()
-  const weightGrams = order.items.reduce((sum, item) => sum + (weights.get(item.variantId) || DEFAULT_ITEM_WEIGHT_GRAMS) * item.quantity, 0)
+  const { weightGrams } = await weighOrderItems(order.items)
   const rates = await getDeliveryRates({
     pickupPincode: settings.pickupPincode,
     deliveryPincode: order.pin,
     paymentMode: order.paymentMethod === 'COD' ? 'cod' : 'prepaid',
-    weightGrams: Math.max(weightGrams, DEFAULT_ITEM_WEIGHT_GRAMS),
+    weightGrams,
     orderValuePaise: Math.round(order.total * 100),
   }).catch((error) => {
     throw badRequest(`NimbusPost could not price this route: ${error.message}`)
   })
   res.json(rates)
+})
+adminOpsRouter.get('/nimbuspost/warehouses', adminOnly, async (req, res) => {
+  if (!nimbuspostEnabled()) throw badRequest('NimbusPost is not connected. Add NIMBUSPOST_API_KEY and NIMBUSPOST_API_SECRET on the server.')
+  const data = await listWarehouses().catch((error) => {
+    throw badRequest(`NimbusPost: ${error.message}`)
+  })
+  res.json({ items: data.items ?? data ?? [] })
+})
+adminOpsRouter.post('/nimbuspost/warehouses/otp/send', adminOnly, async (req, res) => {
+  const data = z.object({ phone: z.string().regex(/^[6-9]\d{9}$/, 'Enter a 10-digit mobile number'), purpose: z.enum(['pickup', 'rto']) }).parse(req.body)
+  const result = await sendWarehouseOtp(Number(data.phone), data.purpose).catch((error) => {
+    throw badRequest(`NimbusPost: ${error.message}`)
+  })
+  res.json(result)
+})
+adminOpsRouter.post('/nimbuspost/warehouses/otp/verify', adminOnly, async (req, res) => {
+  const data = z.object({ phone: z.string().regex(/^[6-9]\d{9}$/), otp: z.string().trim().min(4).max(8), purpose: z.enum(['pickup', 'rto']) }).parse(req.body)
+  const result = await verifyWarehouseOtp(Number(data.phone), data.otp, data.purpose).catch((error) => {
+    throw badRequest(`NimbusPost: ${error.message}`)
+  })
+  res.json(result)
+})
+adminOpsRouter.post('/nimbuspost/warehouses', adminOnly, async (req, res) => {
+  const data = z
+    .object({
+      name: z.string().trim().min(1).max(100),
+      address: z.string().trim().min(1).max(200),
+      pincode: z.string().regex(/^\d{6}$/),
+      city: z.string().trim().min(1),
+      state: z.string().trim().min(1),
+      contactName: z.string().trim().min(1).max(100),
+      contactPhone: z.string().regex(/^[6-9]\d{9}$/),
+      verificationId: z.string().trim().min(1),
+    })
+    .parse(req.body)
+  const warehouse = await createWarehouse({
+    name: data.name,
+    address: { address: data.address, pincode: data.pincode, city: data.city, state: data.state, country: 'India' },
+    contactName: data.contactName,
+    contactPhone: Number(data.contactPhone),
+    verificationId: data.verificationId,
+    isPrimary: true,
+  }).catch((error) => {
+    throw badRequest(`NimbusPost: ${error.message}`)
+  })
+  await audit(actor(req).id, 'settings.nimbuspost_warehouse_created', 'Setting', undefined, { name: data.name })
+  res.status(201).json(warehouse)
+})
+adminOpsRouter.get('/orders/:id/nimbuspost', async (req, res) => {
+  const shipment = await maybe(from('Shipment').select('nimbuspostOrderId, nimbuspostOrderNumber, nimbuspostStatus, ewayBillNumber').eq('orderId', String(req.params.id)).maybeSingle())
+  if (!shipment?.nimbuspostOrderId) return res.json({ booked: false })
+  let live = null
+  if (nimbuspostEnabled()) {
+    live = await npGetOrder(shipment.nimbuspostOrderId).catch(() => null)
+    if (live?.order_status && live.order_status !== shipment.nimbuspostStatus) await exec(from('Shipment').update({ nimbuspostStatus: live.order_status }).eq('orderId', String(req.params.id)))
+  }
+  res.json({
+    booked: true,
+    orderId: shipment.nimbuspostOrderId,
+    orderNumber: shipment.nimbuspostOrderNumber,
+    status: live?.order_status ?? shipment.nimbuspostStatus,
+    ewayBillNumber: shipment.ewayBillNumber,
+    awb: live?.shipment?.awb ?? null,
+    courierName: live?.shipment?.courier_name ?? null,
+    labelUrl: live?.shipment?.label_url ?? null,
+  })
+})
+adminOpsRouter.post('/orders/:id/nimbuspost/create', async (req, res) => {
+  const id = String(req.params.id)
+  if (!nimbuspostEnabled()) throw badRequest('NimbusPost is not connected. Add NIMBUSPOST_API_KEY and NIMBUSPOST_API_SECRET on the server.')
+  const settings = await getSettings()
+  if (!settings.nimbuspostWarehouseId) throw badRequest('Pick a NimbusPost pickup warehouse first, in Settings -> Delivery.')
+  const existing = await maybe(from('Shipment').select('nimbuspostOrderId').eq('orderId', id).maybeSingle())
+  if (existing?.nimbuspostOrderId) throw conflict('This order is already booked with NimbusPost')
+  const order = await maybe(
+    from('Order')
+      .select('number, customerName, email, phone, addressLine, city, state, pin, shipping, total, paymentMethod, items:OrderItem(variantId, name, unitPrice, quantity, hsnCode, gstPercent)')
+      .eq('id', id)
+      .maybeSingle(),
+  )
+  if (!order) throw notFound('Order')
+  const { weightGrams, variants } = await weighOrderItems(order.items)
+  const result = await npCreateOrder({
+    orderNumber: orderCode(order.number),
+    paymentMode: order.paymentMethod === 'COD' ? 'cod' : 'prepaid',
+    warehouseId: settings.nimbuspostWarehouseId,
+    shippingCharges: order.shipping,
+    orderTotal: order.total,
+    weightGrams,
+    address: { name: order.customerName, email: order.email, line: order.addressLine, pin: order.pin, city: order.city, state: order.state, phone: order.phone },
+    items: order.items.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      unitPriceInclGst: item.unitPrice,
+      gstPercent: item.gstPercent,
+      hsnCode: item.hsnCode,
+      sku: variants.get(item.variantId)?.sku,
+    })),
+  }).catch((error) => {
+    throw badRequest(`NimbusPost could not create this order: ${error.message}`)
+  })
+  await exec(
+    from('Shipment').upsert(
+      { orderId: id, nimbuspostOrderId: result.order_id, nimbuspostOrderNumber: orderCode(order.number), nimbuspostStatus: result.order_status ?? 'created', updatedAt: new Date().toISOString() },
+      { onConflict: 'orderId' },
+    ),
+  )
+  await audit(actor(req).id, 'order.nimbuspost.created', 'Order', id, { nimbuspostOrderId: result.order_id })
+  res.status(201).json(result)
+})
+adminOpsRouter.post('/orders/:id/nimbuspost/cancel', async (req, res) => {
+  const id = String(req.params.id)
+  const data = z.object({ reason: z.string().trim().max(300).optional() }).parse(req.body)
+  const shipment = await maybe(from('Shipment').select('nimbuspostOrderId').eq('orderId', id).maybeSingle())
+  if (!shipment?.nimbuspostOrderId) throw badRequest('This order has no NimbusPost booking to cancel.')
+  const result = await npCancelOrder(shipment.nimbuspostOrderId, data.reason).catch((error) => {
+    throw badRequest(`NimbusPost could not cancel this order: ${error.message}`)
+  })
+  await exec(from('Shipment').update({ nimbuspostStatus: 'cancelled' }).eq('orderId', id))
+  await audit(actor(req).id, 'order.nimbuspost.cancelled', 'Order', id, { reason: data.reason })
+  res.json(result)
+})
+adminOpsRouter.post('/orders/nimbuspost/cancel-bulk', adminOnly, async (req, res) => {
+  const data = z.object({ ids: z.array(z.string().max(60)).min(1).max(50), reason: z.string().trim().max(300).optional() }).parse(req.body)
+  const shipments = await rows(from('Shipment').select('orderId, nimbuspostOrderId').in('orderId', data.ids).not('nimbuspostOrderId', 'is', null))
+  if (!shipments.length) throw badRequest('None of the selected orders have a NimbusPost booking.')
+  const result = await npCancelOrders(
+    shipments.map((s) => s.nimbuspostOrderId),
+    data.reason,
+  ).catch((error) => {
+    throw badRequest(`NimbusPost: ${error.message}`)
+  })
+  await exec(
+    from('Shipment')
+      .update({ nimbuspostStatus: 'cancelled' })
+      .in('orderId', shipments.map((s) => s.orderId)),
+  )
+  await audit(actor(req).id, 'order.nimbuspost.cancelled_bulk', 'Order', undefined, { ids: data.ids, reason: data.reason })
+  res.json(result)
+})
+adminOpsRouter.patch('/orders/:id/nimbuspost/eway-bill', async (req, res) => {
+  const id = String(req.params.id)
+  const data = z.object({ ewayBillNumber: z.string().regex(/^\d{12}$/, 'A 12-digit e-way bill number'), documentUrl: z.string().url().optional() }).parse(req.body)
+  const shipment = await maybe(from('Shipment').select('nimbuspostOrderId').eq('orderId', id).maybeSingle())
+  if (!shipment?.nimbuspostOrderId) throw badRequest('This order has no NimbusPost booking yet.')
+  await setEwayBill(shipment.nimbuspostOrderId, data.ewayBillNumber, data.documentUrl).catch((error) => {
+    throw badRequest(`NimbusPost could not save the e-way bill: ${error.message}`)
+  })
+  await exec(from('Shipment').update({ ewayBillNumber: data.ewayBillNumber }).eq('orderId', id))
+  await audit(actor(req).id, 'order.nimbuspost.eway_bill', 'Order', id, { ewayBillNumber: data.ewayBillNumber })
+  res.json({ ok: true })
 })
 adminOpsRouter.get('/payments/webhooks', adminOnly, async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status : null
@@ -274,6 +443,7 @@ adminOpsRouter.put('/settings', adminOnly, async (req, res) => {
       nonServiceablePincodes: z.array(z.string().trim().regex(/^\d{6}$/, '6-digit PIN codes only')).max(1000),
       nonServiceableStates: z.array(z.string().trim().max(60)).max(60),
       pickupPincode: z.string().trim().regex(/^(\d{6})?$/, 'Enter a 6-digit PIN code, or leave it blank'),
+      nimbuspostWarehouseId: z.string().trim().max(100),
     })
     .partial()
     .parse(req.body)
