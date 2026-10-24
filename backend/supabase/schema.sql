@@ -690,18 +690,20 @@ CREATE TABLE IF NOT EXISTS sales."Shipment" (
     "trackingNumber" TEXT,
     "shippedAt" TIMESTAMPTZ(3),
     "deliveredAt" TIMESTAMPTZ(3),
-    "nimbuspostOrderId" TEXT,
-    "nimbuspostOrderNumber" TEXT,
-    "nimbuspostStatus" TEXT,
+    "provider" TEXT,
+    "providerOrderId" TEXT,
+    "providerOrderNumber" TEXT,
+    "providerStatus" TEXT,
     "ewayBillNumber" TEXT,
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Shipment_pkey" PRIMARY KEY ("id")
 );
-ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "nimbuspostOrderId" TEXT;
-ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "nimbuspostOrderNumber" TEXT;
-ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "nimbuspostStatus" TEXT;
+ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "provider" TEXT;
+ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "providerOrderId" TEXT;
+ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "providerOrderNumber" TEXT;
+ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "providerStatus" TEXT;
 ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "ewayBillNumber" TEXT;
 
 -- Refund: money sent back against a payment.

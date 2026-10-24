@@ -24,7 +24,9 @@ type NimbusPostOrder = {
   ewayBillNumber?: string | null
   awb?: string | null
   courierName?: string | null
-  labelUrl?: string | null
+  latest?: { shipStatus: string; location: string; message: string; eventTime: string } | null
+  scans?: { timestamp: string; status: string; location: string; remark: string }[]
+  trackingUrl?: string | null
 }
 
 const statusTone: Record<OrderStatus, Tone> = { PLACED: 'gray', CONFIRMED: 'blue', PACKED: 'blue', SHIPPED: 'orange', OUT_FOR_DELIVERY: 'orange', DELIVERED: 'green', CANCELLED: 'red', RETURNED: 'red' }
@@ -269,19 +271,31 @@ function DeliveryRateCard({ orderId }: { orderId: string }) {
 function NimbusPostBookingCard({ orderId }: { orderId: string }) {
   const { confirm } = useUi()
   const [addingEway, setAddingEway] = useState(false)
+  const [pickingCourier, setPickingCourier] = useState(false)
+  const [pickupDate, setPickupDate] = useState('')
   const query = useQuery({ queryKey: ['order-nimbuspost', orderId], queryFn: () => api<NimbusPostOrder>(`/admin/orders/${orderId}/nimbuspost`) })
-  const book = useAction(() => api<{ order_id: string }>(`/admin/orders/${orderId}/nimbuspost/create`, { method: 'POST' }), { success: 'Order booked with NimbusPost', invalidate: ['order-nimbuspost'] })
+  const create = useAction(() => api<{ order_id: string }>(`/admin/orders/${orderId}/nimbuspost/create`, { method: 'POST' }), { success: 'Order created with NimbusPost', invalidate: ['order-nimbuspost'] })
+  const book = useAction((courierId?: string) => api<{ awb: string }>(`/admin/orders/${orderId}/nimbuspost/book`, { method: 'POST', body: { courierId } }), {
+    success: (r) => `Courier booked · AWB ${r.awb}`,
+    invalidate: ['order-nimbuspost'],
+    onDone: () => setPickingCourier(false),
+  })
+  const pickup = useAction(() => api(`/admin/orders/${orderId}/nimbuspost/pickup`, { method: 'POST', body: { pickupDate: pickupDate || undefined } }), { success: 'Pickup scheduled', invalidate: ['order-nimbuspost'] })
   const cancel = useAction((reason: string) => api(`/admin/orders/${orderId}/nimbuspost/cancel`, { method: 'POST', body: { reason: reason || undefined } }), {
-    success: 'NimbusPost order cancelled',
+    success: 'NimbusPost booking cancelled',
     invalidate: ['order-nimbuspost'],
   })
+  const label = useAction(() => api<{ url: string }>(`/admin/orders/${orderId}/nimbuspost/label`), {
+    onDone: (r) => window.open(r.url, '_blank', 'noopener'),
+  })
   const np = query.data
+  const cancelled = np?.status === 'cancelled'
 
   return (
     <section className="rounded-xl border border-line p-4 text-sm">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-xs font-bold tracking-wider text-muted uppercase">NimbusPost order</h3>
-        {np?.booked && np.status && <Badge tone={np.status === 'cancelled' ? 'red' : np.status === 'delivered' ? 'green' : 'blue'}>{np.status.replace(/_/g, ' ')}</Badge>}
+        {np?.booked && np.status && <Badge tone={cancelled ? 'red' : np.status === 'delivered' ? 'green' : 'blue'}>{np.status.replace(/_/g, ' ')}</Badge>}
       </div>
       {query.isLoading ? (
         <p className="mt-2 text-xs text-muted">Checking…</p>
@@ -289,34 +303,71 @@ function NimbusPostBookingCard({ orderId }: { orderId: string }) {
         <p className="mt-2 text-xs text-accent-dark">{errorMessage(query.error)}</p>
       ) : !np?.booked ? (
         <div className="mt-2">
-          <p className="text-xs text-muted">Not booked yet. Creates a real order on your NimbusPost account (you can still cancel it after).</p>
-          <Button size="sm" variant="accent" className="mt-2" loading={book.isPending} onClick={() => book.mutate(undefined)}>Book with NimbusPost</Button>
+          <p className="text-xs text-muted">Not created yet. This saves a real order on your NimbusPost account (you can still cancel it after); a courier is booked as a separate step.</p>
+          <Button size="sm" variant="accent" className="mt-2" loading={create.isPending} onClick={() => create.mutate(undefined)}>Create NimbusPost order</Button>
         </div>
       ) : (
         <div className="mt-2 space-y-2">
           <p className="text-xs text-muted">Order {np.orderNumber} · NimbusPost id <span className="font-mono">{np.orderId}</span></p>
-          {np.awb && <p className="text-xs"><span className="text-muted">AWB:</span> <span className="font-bold">{np.awb}</span>{np.courierName ? ` · ${np.courierName}` : ''}</p>}
+          {np.awb ? (
+            <p className="text-xs"><span className="text-muted">AWB:</span> <span className="font-bold">{np.awb}</span>{np.courierName ? ` · ${np.courierName}` : ''}</p>
+          ) : (
+            !cancelled && <p className="text-xs text-accent-dark">No courier booked yet — nothing will be picked up until one is.</p>
+          )}
           {np.ewayBillNumber && <p className="text-xs"><span className="text-muted">E-way bill:</span> <span className="font-mono font-bold">{np.ewayBillNumber}</span></p>}
-          {np.status !== 'cancelled' && (
+          {np.latest && (
+            <p className="text-xs"><span className="text-muted">Latest scan:</span> {np.latest.message || np.latest.shipStatus}{np.latest.location ? ` · ${np.latest.location}` : ''} <span className="text-muted">({dateTime(np.latest.eventTime)})</span></p>
+          )}
+          {!cancelled && (
             <div className="flex flex-wrap gap-2 pt-1">
               <Button size="sm" variant="outline" onClick={() => void query.refetch()}>Refresh status</Button>
+              {!np.awb ? (
+                <>
+                  <Button size="sm" variant="accent" loading={book.isPending} onClick={() => book.mutate(undefined)}>Book cheapest courier</Button>
+                  <Button size="sm" variant="outline" onClick={() => setPickingCourier(true)}>Choose a courier</Button>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <Input type="date" value={pickupDate} onChange={(e) => setPickupDate(e.target.value)} className="h-8 w-36 text-xs" />
+                    <Button size="sm" variant="outline" loading={pickup.isPending} onClick={() => pickup.mutate(undefined)}>Schedule pickup</Button>
+                  </div>
+                  <Button size="sm" variant="outline" loading={label.isPending} onClick={() => label.mutate(undefined)}>Print label</Button>
+                </>
+              )}
               <Button size="sm" variant="outline" onClick={() => setAddingEway(true)}>{np.ewayBillNumber ? 'Update e-way bill' : 'Add e-way bill'}</Button>
               <Button
                 size="sm"
                 variant="danger"
                 loading={cancel.isPending}
                 onClick={async () => {
-                  const ok = await confirm({ title: 'Cancel this NimbusPost order?', text: 'This cancels the real booking on your NimbusPost account.', confirmLabel: 'Cancel order', danger: true })
+                  const ok = await confirm({
+                    title: np.awb ? 'Cancel this shipment?' : 'Cancel this NimbusPost order?',
+                    text: 'This cancels the real booking on your NimbusPost account.',
+                    confirmLabel: 'Cancel',
+                    danger: true,
+                  })
                   if (ok) cancel.mutate('')
                 }}
               >
-                Cancel NimbusPost order
+                {np.awb ? 'Cancel shipment' : 'Cancel order'}
               </Button>
             </div>
+          )}
+          {np.scans && np.scans.length > 0 && (
+            <ol className="mt-2 space-y-1 border-t border-line pt-2 text-xs">
+              {np.scans.slice(0, 6).map((scan, index) => (
+                <li key={index} className="flex justify-between gap-2 text-muted">
+                  <span>{scan.remark || scan.status}{scan.location ? ` · ${scan.location}` : ''}</span>
+                  <span className="shrink-0">{dateTime(scan.timestamp)}</span>
+                </li>
+              ))}
+            </ol>
           )}
         </div>
       )}
       {addingEway && <EwayBillModal orderId={orderId} current={np?.ewayBillNumber ?? ''} onClose={() => setAddingEway(false)} />}
+      {pickingCourier && <ChooseCourierModal orderId={orderId} onClose={() => setPickingCourier(false)} onPick={(courierId) => book.mutate(courierId)} busy={book.isPending} />}
     </section>
   )
 }
@@ -335,6 +386,35 @@ function EwayBillModal({ orderId, current, onClose }: { orderId: string; current
         <Field label="E-way bill number (12 digits)"><Input value={number} inputMode="numeric" maxLength={12} onChange={(e) => setNumber(e.target.value.replace(/\D/g, ''))} placeholder="331001234567" /></Field>
         <Field label="Document link (optional)" hint="A public https link to the PDF/image, under 5 MB"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://..." /></Field>
       </div>
+    </Modal>
+  )
+}
+
+/** Reuses the same rate check as DeliveryRateCard, but to pick a specific courier to book rather than just quote. */
+function ChooseCourierModal({ orderId, onClose, onPick, busy }: { orderId: string; onClose: () => void; onPick: (courierId: string) => void; busy: boolean }) {
+  const query = useQuery({ queryKey: ['order-delivery-rate', orderId], queryFn: () => api<DeliveryRate>(`/admin/orders/${orderId}/delivery-rate`) })
+  return (
+    <Modal title="Choose a courier" onClose={onClose}>
+      {query.isLoading ? (
+        <p className="text-sm text-muted">Checking couriers…</p>
+      ) : query.error ? (
+        <p className="text-sm text-accent-dark">{errorMessage(query.error)}</p>
+      ) : !query.data?.deliverable ? (
+        <p className="text-sm text-accent-dark">No courier currently serves this route.</p>
+      ) : (
+        <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line">
+          {query.data.couriers.map((courier) => (
+            <li key={courier.courierId} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+              <span>
+                <span className="font-bold">{courier.courierName}</span>
+                {courier.tatDays != null && <span className="text-xs text-muted"> · {courier.tatDays} day{courier.tatDays === 1 ? '' : 's'}</span>}
+                <span className="text-xs text-muted"> · {inr(Math.round(courier.ratePaise / 100))}</span>
+              </span>
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => onPick(courier.courierId)}>Book</Button>
+            </li>
+          ))}
+        </ul>
+      )}
     </Modal>
   )
 }

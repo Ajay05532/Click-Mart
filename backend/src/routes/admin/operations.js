@@ -10,16 +10,22 @@ import { changeStatus, loadOrder, refundOrder } from '../../services/orders.js'
 import { orderCode, serializeOrder } from '../../utils/serializers.js'
 import { getSettings, saveSettings } from '../../services/settings.js'
 import {
+  bookShipment,
   cancelOrder as npCancelOrder,
   cancelOrders as npCancelOrders,
+  cancelShipment,
   createOrder as npCreateOrder,
   createWarehouse,
   getDeliveryRates,
+  getLabels,
   getOrder as npGetOrder,
   listWarehouses,
   nimbuspostEnabled,
+  schedulePickup,
   sendWarehouseOtp,
   setEwayBill,
+  setShipmentEwayBill,
+  trackOrder,
   verifyWarehouseOtp,
 } from '../../services/nimbuspost.js'
 import { ORDER_SELECT } from '../../database/selects.js'
@@ -165,31 +171,79 @@ adminOpsRouter.post('/nimbuspost/warehouses', adminOnly, async (req, res) => {
   res.status(201).json(warehouse)
 })
 adminOpsRouter.get('/orders/:id/nimbuspost', async (req, res) => {
-  const shipment = await maybe(from('Shipment').select('nimbuspostOrderId, nimbuspostOrderNumber, nimbuspostStatus, ewayBillNumber').eq('orderId', String(req.params.id)).maybeSingle())
-  if (!shipment?.nimbuspostOrderId) return res.json({ booked: false })
-  let live = null
+  const id = String(req.params.id)
+  const [shipment, order] = await Promise.all([
+    maybe(from('Shipment').select('providerOrderId, providerOrderNumber, providerStatus, ewayBillNumber').eq('orderId', id).maybeSingle()),
+    maybe(from('Order').select('carrier, trackingNumber').eq('id', id).maybeSingle()),
+  ])
+  if (!shipment?.providerOrderId) return res.json({ booked: false })
+  // Once booked, tracking (by order id) has richer, fresher data than a plain order-status check; fall back
+  // to the order-status call for a created-but-not-yet-booked order (tracking 404s with NO_SHIPMENT there).
+  let tracking = null
+  let status = shipment.providerStatus
   if (nimbuspostEnabled()) {
-    live = await npGetOrder(shipment.nimbuspostOrderId).catch(() => null)
-    if (live?.order_status && live.order_status !== shipment.nimbuspostStatus) await exec(from('Shipment').update({ nimbuspostStatus: live.order_status }).eq('orderId', String(req.params.id)))
+    tracking = await trackOrder(shipment.providerOrderId).catch(() => null)
+    if (!tracking) {
+      const live = await npGetOrder(shipment.providerOrderId).catch(() => null)
+      status = live?.order_status ?? status
+    } else {
+      status = tracking.orderStatus ?? status
+    }
+    if (status !== shipment.providerStatus) await exec(from('Shipment').update({ providerStatus: status }).eq('orderId', id))
   }
   res.json({
     booked: true,
-    orderId: shipment.nimbuspostOrderId,
-    orderNumber: shipment.nimbuspostOrderNumber,
-    status: live?.order_status ?? shipment.nimbuspostStatus,
+    orderId: shipment.providerOrderId,
+    orderNumber: shipment.providerOrderNumber,
+    status,
     ewayBillNumber: shipment.ewayBillNumber,
-    awb: live?.shipment?.awb ?? null,
-    courierName: live?.shipment?.courier_name ?? null,
-    labelUrl: live?.shipment?.label_url ?? null,
+    awb: order?.trackingNumber ?? null,
+    courierName: order?.carrier ?? null,
+    latest: tracking?.latest ?? null,
+    scans: tracking?.scans ?? [],
+    trackingUrl: tracking?.tracking_url ?? null,
   })
+})
+adminOpsRouter.post('/orders/:id/nimbuspost/book', async (req, res) => {
+  const id = String(req.params.id)
+  const data = z.object({ courierId: z.string().trim().max(100).optional() }).parse(req.body)
+  const shipment = await maybe(from('Shipment').select('providerOrderId').eq('orderId', id).maybeSingle())
+  if (!shipment?.providerOrderId) throw badRequest('Create the NimbusPost order first.')
+  const result = await bookShipment(shipment.providerOrderId, data.courierId).catch((error) => {
+    throw badRequest(`NimbusPost could not book a courier: ${error.message}`)
+  })
+  await exec(from('Shipment').update({ providerStatus: result.order_status ?? 'booked' }).eq('orderId', id))
+  await exec(from('Order').update({ carrier: result.courier_name, trackingNumber: result.awb }).eq('id', id))
+  await audit(actor(req).id, 'order.nimbuspost.booked', 'Order', id, { awb: result.awb, courierName: result.courier_name })
+  res.json(result)
+})
+adminOpsRouter.post('/orders/:id/nimbuspost/pickup', async (req, res) => {
+  const id = String(req.params.id)
+  const data = z.object({ pickupDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').optional() }).parse(req.body)
+  const shipment = await maybe(from('Shipment').select('providerOrderId').eq('orderId', id).maybeSingle())
+  if (!shipment?.providerOrderId) throw badRequest('This order has no NimbusPost booking yet.')
+  const result = await schedulePickup([shipment.providerOrderId], data.pickupDate).catch((error) => {
+    throw badRequest(`NimbusPost could not schedule the pickup: ${error.message}`)
+  })
+  await audit(actor(req).id, 'order.nimbuspost.pickup_scheduled', 'Order', id, { pickupDate: data.pickupDate })
+  res.json(result)
+})
+adminOpsRouter.get('/orders/:id/nimbuspost/label', async (req, res) => {
+  const id = String(req.params.id)
+  const shipment = await maybe(from('Shipment').select('providerOrderId').eq('orderId', id).maybeSingle())
+  if (!shipment?.providerOrderId) throw badRequest('This order has no NimbusPost booking yet.')
+  const result = await getLabels([shipment.providerOrderId]).catch((error) => {
+    throw badRequest(`NimbusPost could not generate a label: ${error.message}`)
+  })
+  res.json(result)
 })
 adminOpsRouter.post('/orders/:id/nimbuspost/create', async (req, res) => {
   const id = String(req.params.id)
   if (!nimbuspostEnabled()) throw badRequest('NimbusPost is not connected. Add NIMBUSPOST_API_KEY and NIMBUSPOST_API_SECRET on the server.')
   const settings = await getSettings()
   if (!settings.nimbuspostWarehouseId) throw badRequest('Pick a NimbusPost pickup warehouse first, in Settings -> Delivery.')
-  const existing = await maybe(from('Shipment').select('nimbuspostOrderId').eq('orderId', id).maybeSingle())
-  if (existing?.nimbuspostOrderId) throw conflict('This order is already booked with NimbusPost')
+  const existing = await maybe(from('Shipment').select('providerOrderId').eq('orderId', id).maybeSingle())
+  if (existing?.providerOrderId) throw conflict('This order is already booked with NimbusPost')
   const order = await maybe(
     from('Order')
       .select('number, customerName, email, phone, addressLine, city, state, pin, shipping, total, paymentMethod, items:OrderItem(variantId, name, unitPrice, quantity, hsnCode, gstPercent)')
@@ -219,38 +273,47 @@ adminOpsRouter.post('/orders/:id/nimbuspost/create', async (req, res) => {
   })
   await exec(
     from('Shipment').upsert(
-      { orderId: id, nimbuspostOrderId: result.order_id, nimbuspostOrderNumber: orderCode(order.number), nimbuspostStatus: result.order_status ?? 'created', updatedAt: new Date().toISOString() },
+      { orderId: id, provider: 'nimbuspost', providerOrderId: result.order_id, providerOrderNumber: orderCode(order.number), providerStatus: result.order_status ?? 'created', updatedAt: new Date().toISOString() },
       { onConflict: 'orderId' },
     ),
   )
-  await audit(actor(req).id, 'order.nimbuspost.created', 'Order', id, { nimbuspostOrderId: result.order_id })
+  await audit(actor(req).id, 'order.nimbuspost.created', 'Order', id, { providerOrderId: result.order_id })
   res.status(201).json(result)
 })
 adminOpsRouter.post('/orders/:id/nimbuspost/cancel', async (req, res) => {
   const id = String(req.params.id)
   const data = z.object({ reason: z.string().trim().max(300).optional() }).parse(req.body)
-  const shipment = await maybe(from('Shipment').select('nimbuspostOrderId').eq('orderId', id).maybeSingle())
-  if (!shipment?.nimbuspostOrderId) throw badRequest('This order has no NimbusPost booking to cancel.')
-  const result = await npCancelOrder(shipment.nimbuspostOrderId, data.reason).catch((error) => {
-    throw badRequest(`NimbusPost could not cancel this order: ${error.message}`)
-  })
-  await exec(from('Shipment').update({ nimbuspostStatus: 'cancelled' }).eq('orderId', id))
+  const [shipment, order] = await Promise.all([
+    maybe(from('Shipment').select('providerOrderId').eq('orderId', id).maybeSingle()),
+    maybe(from('Order').select('trackingNumber').eq('id', id).maybeSingle()),
+  ])
+  if (!shipment?.providerOrderId) throw badRequest('This order has no NimbusPost booking to cancel.')
+  // A booked order (has an AWB) must be cancelled by AWB; cancelling the order itself only works beforehand.
+  const result = order?.trackingNumber
+    ? await cancelShipment(order.trackingNumber, data.reason).catch((error) => {
+        throw badRequest(`NimbusPost could not cancel this shipment: ${error.message}`)
+      })
+    : await npCancelOrder(shipment.providerOrderId, data.reason).catch((error) => {
+        throw badRequest(`NimbusPost could not cancel this order: ${error.message}`)
+      })
+  await exec(from('Shipment').update({ providerStatus: 'cancelled' }).eq('orderId', id))
+  if (order?.trackingNumber) await exec(from('Order').update({ carrier: null, trackingNumber: null }).eq('id', id))
   await audit(actor(req).id, 'order.nimbuspost.cancelled', 'Order', id, { reason: data.reason })
   res.json(result)
 })
 adminOpsRouter.post('/orders/nimbuspost/cancel-bulk', adminOnly, async (req, res) => {
   const data = z.object({ ids: z.array(z.string().max(60)).min(1).max(50), reason: z.string().trim().max(300).optional() }).parse(req.body)
-  const shipments = await rows(from('Shipment').select('orderId, nimbuspostOrderId').in('orderId', data.ids).not('nimbuspostOrderId', 'is', null))
+  const shipments = await rows(from('Shipment').select('orderId, providerOrderId').in('orderId', data.ids).not('providerOrderId', 'is', null))
   if (!shipments.length) throw badRequest('None of the selected orders have a NimbusPost booking.')
   const result = await npCancelOrders(
-    shipments.map((s) => s.nimbuspostOrderId),
+    shipments.map((s) => s.providerOrderId),
     data.reason,
   ).catch((error) => {
     throw badRequest(`NimbusPost: ${error.message}`)
   })
   await exec(
     from('Shipment')
-      .update({ nimbuspostStatus: 'cancelled' })
+      .update({ providerStatus: 'cancelled' })
       .in('orderId', shipments.map((s) => s.orderId)),
   )
   await audit(actor(req).id, 'order.nimbuspost.cancelled_bulk', 'Order', undefined, { ids: data.ids, reason: data.reason })
@@ -259,9 +322,14 @@ adminOpsRouter.post('/orders/nimbuspost/cancel-bulk', adminOnly, async (req, res
 adminOpsRouter.patch('/orders/:id/nimbuspost/eway-bill', async (req, res) => {
   const id = String(req.params.id)
   const data = z.object({ ewayBillNumber: z.string().regex(/^\d{12}$/, 'A 12-digit e-way bill number'), documentUrl: z.string().url().optional() }).parse(req.body)
-  const shipment = await maybe(from('Shipment').select('nimbuspostOrderId').eq('orderId', id).maybeSingle())
-  if (!shipment?.nimbuspostOrderId) throw badRequest('This order has no NimbusPost booking yet.')
-  await setEwayBill(shipment.nimbuspostOrderId, data.ewayBillNumber, data.documentUrl).catch((error) => {
+  const [shipment, order] = await Promise.all([
+    maybe(from('Shipment').select('providerOrderId').eq('orderId', id).maybeSingle()),
+    maybe(from('Order').select('trackingNumber').eq('id', id).maybeSingle()),
+  ])
+  if (!shipment?.providerOrderId) throw badRequest('This order has no NimbusPost booking yet.')
+  // Once booked (AWB exists) the e-way bill goes to the courier directly by AWB; before that it is saved on
+  // the order and sent along when booked.
+  await (order?.trackingNumber ? setShipmentEwayBill(order.trackingNumber, data.ewayBillNumber, data.documentUrl) : setEwayBill(shipment.providerOrderId, data.ewayBillNumber, data.documentUrl)).catch((error) => {
     throw badRequest(`NimbusPost could not save the e-way bill: ${error.message}`)
   })
   await exec(from('Shipment').update({ ewayBillNumber: data.ewayBillNumber }).eq('orderId', id))

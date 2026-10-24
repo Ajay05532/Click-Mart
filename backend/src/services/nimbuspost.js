@@ -169,3 +169,30 @@ export const cancelOrders = (orderIds, reason) => npFetch('/orders/cancel', { me
 
 export const setEwayBill = (orderId, ewayBillNumber, documentUrl) =>
   npFetch(`/orders/${encodeURIComponent(orderId)}/eway-bill`, { method: 'PATCH', body: { eway_bill_number: ewayBillNumber, ...(documentUrl ? { eway_bill_document_url: documentUrl } : {}) } })
+
+/* ---------------- Shipments ---------------- */
+// Booking is a separate step from creating the order (POST /orders above): this assigns a courier and
+// mints the AWB. Omit courierId to let NimbusPost's own ranking pick the top serviceable courier.
+export const bookShipment = (orderId, courierId) => npFetch('/shipments/book', { method: 'POST', body: { order_id: orderId, ...(courierId ? { courier_id: courierId } : {}) } })
+
+/** Cancels a booked shipment by AWB (order goes back to `created` and can be booked again) — different from
+ * `cancelOrder` above, which cancels the order itself and only works before a courier is booked. */
+export const cancelShipment = (awb, reason) => npFetch('/shipments/cancel', { method: 'POST', body: { awb, reason } })
+
+export const schedulePickup = (orderIds, pickupDate) => npFetch('/shipments/pickup', { method: 'POST', body: { order_ids: orderIds, ...(pickupDate ? { pickup_date: pickupDate } : {}) } })
+
+/** One merged label PDF for the given orders. `url` expires — fetch it fresh each time, don't cache it. */
+export const getLabels = (orderIds) => npFetch('/shipments/labels', { method: 'POST', body: { order_ids: orderIds } })
+
+export const setShipmentEwayBill = (awb, ewayBillNumber, documentUrl) =>
+  npFetch('/shipments/eway-bill', { method: 'POST', body: { awb, eway_bill_number: ewayBillNumber, ...(documentUrl ? { eway_bill_document_url: documentUrl } : {}) } })
+
+/* ---------------- Tracking ---------------- */
+
+export const trackByAwb = (awb) => npFetch(`/tracking/${encodeURIComponent(awb)}`)
+
+export const trackBulk = (awbs) => npFetch('/tracking/bulk', { method: 'POST', body: { awbs } })
+
+/** Same shape as trackByAwb, for an order's current AWB — the one to use once we have an order id but may
+ * not have (or trust) a stored AWB. 404s with NO_SHIPMENT if the order was never booked. */
+export const trackOrder = (orderId) => npFetch(`/tracking/order/${encodeURIComponent(orderId)}`)
