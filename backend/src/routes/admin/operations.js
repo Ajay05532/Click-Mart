@@ -9,11 +9,10 @@ import { badRequest, conflict, notFound } from '../../utils/errors.js'
 import { changeStatus, loadOrder, refundOrder } from '../../services/orders.js'
 import { orderCode, serializeOrder } from '../../utils/serializers.js'
 import { getSettings, saveSettings } from '../../services/settings.js'
+import { cancelProviderBooking } from '../../services/shipping.js'
 import {
   bookShipment,
-  cancelOrder as npCancelOrder,
   cancelOrders as npCancelOrders,
-  cancelShipment,
   createOrder as npCreateOrder,
   createWarehouse,
   getDeliveryRates,
@@ -283,21 +282,12 @@ adminOpsRouter.post('/orders/:id/nimbuspost/create', async (req, res) => {
 adminOpsRouter.post('/orders/:id/nimbuspost/cancel', async (req, res) => {
   const id = String(req.params.id)
   const data = z.object({ reason: z.string().trim().max(300).optional() }).parse(req.body)
-  const [shipment, order] = await Promise.all([
-    maybe(from('Shipment').select('providerOrderId').eq('orderId', id).maybeSingle()),
-    maybe(from('Order').select('trackingNumber').eq('id', id).maybeSingle()),
-  ])
-  if (!shipment?.providerOrderId) throw badRequest('This order has no NimbusPost booking to cancel.')
-  // A booked order (has an AWB) must be cancelled by AWB; cancelling the order itself only works beforehand.
-  const result = order?.trackingNumber
-    ? await cancelShipment(order.trackingNumber, data.reason).catch((error) => {
-        throw badRequest(`NimbusPost could not cancel this shipment: ${error.message}`)
-      })
-    : await npCancelOrder(shipment.providerOrderId, data.reason).catch((error) => {
-        throw badRequest(`NimbusPost could not cancel this order: ${error.message}`)
-      })
-  await exec(from('Shipment').update({ providerStatus: 'cancelled' }).eq('orderId', id))
-  if (order?.trackingNumber) await exec(from('Order').update({ carrier: null, trackingNumber: null }).eq('id', id))
+  // Shared with the customer's own "Cancel order": by AWB (shipment-cancel) once a courier is assigned,
+  // by order id before that -- cancelling the order itself only works before a courier is booked.
+  const result = await cancelProviderBooking(id, data.reason).catch((error) => {
+    throw badRequest(`NimbusPost could not cancel this booking: ${error.message}`)
+  })
+  if (!result) throw badRequest('This order has no NimbusPost booking to cancel.')
   await audit(actor(req).id, 'order.nimbuspost.cancelled', 'Order', id, { reason: data.reason })
   res.json(result)
 })

@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { CardIcon, CashIcon, CheckIcon, CopyIcon, MailIcon, PhoneIcon, PinIcon, QrIcon, ReceiptIcon } from '../components/icons.tsx'
+import { CardIcon, CashIcon, CheckIcon, CopyIcon, MailIcon, PhoneIcon, PinIcon, QrIcon, ReceiptIcon, TruckIcon } from '../components/icons.tsx'
 import { Container } from '../components/layout/Container.tsx'
 import { ProductMedia } from '../components/product/ProductMedia.tsx'
 import { OrderHelp } from '../components/support/OrderHelp.tsx'
 import { EmptyState } from '../components/ui/Primitives.tsx'
 import { useAuth } from '../context/AuthContext.tsx'
 import { formatPrice } from '../lib/money.ts'
-import { formatDateTime, formatDay, isEnded, openInvoice, paymentLabel, stageOf, statusLabel, trackingStages, useOrder, type ApiOrder, type OrderStatus } from '../lib/orders.ts'
+import { formatDateTime, formatDay, isEnded, openInvoice, paymentLabel, stageOf, statusLabel, trackingStages, useOrder, useOrderTracking, type ApiOrder, type OrderStatus } from '../lib/orders.ts'
 import { useDocumentTitle } from '../lib/useDocumentTitle.ts'
 
 const stepLabels = ['Placed', 'Packed', 'Shipped', 'On the way', 'Delivered']
@@ -125,6 +125,7 @@ export function OrderPage() {
           )}
 
           {!ended && <Milestone status={order.status} />}
+          {!ended && user && <LiveTracking code={order.code} />}
 
           <div className="mt-5 grid grid-cols-1 items-start gap-5 lg:grid-cols-3">
             <section className="card overflow-hidden lg:col-span-2">
@@ -256,6 +257,44 @@ function Milestone({ status }: { status: OrderStatus }) {
           })}
         </ol>
       </div>
+    </section>
+  )
+}
+
+/** Real courier scans, once a courier has been booked. Most orders won't have this yet — the staged
+ * progress above (Milestone) is still the main picture, moved along by hand until that is automated. */
+function LiveTracking({ code }: { code: string }) {
+  const { data, isLoading } = useOrderTracking(code)
+  if (isLoading || !data?.available) return null
+  return (
+    <section className="card mt-5 px-4 py-5 sm:px-8" aria-label="Live courier tracking">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-xs font-extrabold tracking-[0.14em] text-muted uppercase">
+          <TruckIcon className="size-4 text-brand" /> Live tracking
+        </h2>
+        {data.trackingUrl && (
+          <a href={data.trackingUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-brand hover:underline">
+            Track with courier
+          </a>
+        )}
+      </div>
+      {data.latest && (
+        <p className="mt-3 text-sm">
+          <span className="font-bold">{data.latest.message || data.latest.shipStatus}</span>
+          {data.latest.location ? ` · ${data.latest.location}` : ''}
+          <span className="block text-xs text-muted">{formatDateTime(data.latest.eventTime)}</span>
+        </p>
+      )}
+      {data.scans && data.scans.length > 1 && (
+        <ol className="mt-3 space-y-2 border-t border-line pt-3 text-xs">
+          {data.scans.slice(1).map((scan, index) => (
+            <li key={index} className="flex justify-between gap-3 text-muted">
+              <span>{scan.remark || scan.status}{scan.location ? ` · ${scan.location}` : ''}</span>
+              <span className="shrink-0">{formatDateTime(scan.timestamp)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
     </section>
   )
 }

@@ -50,6 +50,28 @@ export const useOrder = (code: string, enabled = true) => {
   })
 }
 
+export type OrderTracking = {
+  available: boolean
+  status?: string
+  latest?: { shipStatus: string; location: string; message: string; eventTime: string } | null
+  scans?: { timestamp: string; status: string; location: string; remark: string }[]
+  trackingUrl?: string | null
+}
+
+/** Real courier tracking from NimbusPost, once a courier has been booked. Not every order has one — most
+ * stores are still moving the status along by hand (see OrderStatus), so this is extra detail, not the
+ * only source of truth. */
+export const useOrderTracking = (code: string, enabled = true) => {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['order-tracking', code, user?.id],
+    queryFn: () => api<OrderTracking>(`/orders/${encodeURIComponent(code)}/tracking`),
+    enabled: enabled && !!user && !!code,
+    staleTime: 60_000,
+    retry: false,
+  })
+}
+
 /** The five steps shown to customers. Several back-office statuses can map to one step. */
 export const trackingStages = [
   { key: 'placed', label: 'Order placed', note: 'We have received your order.', statuses: ['PLACED', 'CONFIRMED'], expectedHours: 0 },
