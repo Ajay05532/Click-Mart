@@ -202,7 +202,25 @@ export function CheckoutPage() {
 
   const razorpay = settings.paymentProvider === 'razorpay'
   const online = payment !== 'cod'
-  const codAvailable = settings.codEnabled && cart.total <= settings.codMaxOrder
+  // The server checks the route for the address PIN (services/delivery.js) and, with courier rates on, prices it.
+  const pinReady = /^\d{6}$/.test(form.pin)
+  const routeFor = cart.delivery && cart.delivery.pin === form.pin ? cart.delivery : null
+  const undeliverable = !!routeFor && !routeFor.deliverable
+  const [noCodPin, setNoCodPin] = useState('')
+  useEffect(() => {
+    cart.setDeliveryTarget(pinReady ? { pin: form.pin, state: form.state, paymentMethod: step === 1 ? apiMethod[payment] : undefined } : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinReady, form.pin, form.state, step, payment])
+  useEffect(() => () => cart.setDeliveryTarget(null), [])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (payment === 'cod' && routeFor && !routeFor.codAvailable) {
+      setNoCodPin(routeFor.pin)
+      notify({ tone: 'warning', title: 'Cash on delivery is not offered here', text: `Couriers do not collect cash at PIN code ${routeFor.pin}. Please pay online.` })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payment, routeFor?.pin, routeFor?.codAvailable])
+  const courierNoCod = noCodPin === form.pin
+  const codAvailable = settings.codEnabled && cart.total <= settings.codMaxOrder && !courierNoCod
   const chosenLabel = addressLabels[savedAddresses.find((item) => item.id === addressId)?.label ?? addressLabel] ?? 'Home'
   const choosePayment = (next: Payment) => {
     setPayment(next)
@@ -238,6 +256,7 @@ export function CheckoutPage() {
   const continueToPayment = async (event: FormEvent) => {
     event.preventDefault()
     if (savingAddress || !validateDetails()) return
+    if (undeliverable) return setDetailsError(`We cannot deliver to PIN code ${form.pin} yet. Please choose another address.`)
     setDetailsError('')
     // A new address is saved to the account before the order, so it is picked from the list next time.
     if (user && !addressId) {
@@ -273,7 +292,7 @@ export function CheckoutPage() {
   }
 
   const placeOrder = async () => {
-    if (!validatePayment() || cart.count === 0 || processing) return
+    if (!validatePayment() || cart.count === 0 || processing || undeliverable) return
     setFailed('')
     setProcessing(true)
     const digits = selectedSaved ? (selectedSaved.last4 ?? '') : stripNonDigits(card.number)
@@ -556,6 +575,14 @@ export function CheckoutPage() {
                   <input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" className="field" aria-invalid={!!errors.email} placeholder="you@example.com" />
                 </Field>
 
+                {undeliverable && (
+                  <p role="alert" className="motion-panel mt-5 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    <PinIcon className="mt-0.5 size-4 shrink-0" />
+                    <span>
+                      <span className="font-extrabold">We cannot deliver to PIN code {form.pin} yet.</span> {savedAddresses.length > 1 ? 'Pick another address or add a new one.' : 'Please use a different address.'}
+                    </span>
+                  </p>
+                )}
                 {detailsError && (
                   <p role="alert" className="motion-panel mt-5 rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
                     {detailsError}
@@ -567,7 +594,7 @@ export function CheckoutPage() {
                     <span className="font-extrabold text-brand">Standard delivery</span> in 3–5 working days. You can track every step live after ordering.
                   </p>
                 </div>
-                <button type="submit" disabled={savingAddress || addresses.isLoading} className="btn btn-accent btn-lg mt-7 hidden w-full sm:w-auto lg:inline-flex">
+                <button type="submit" disabled={savingAddress || addresses.isLoading || undeliverable} className="btn btn-accent btn-lg mt-7 hidden w-full sm:w-auto lg:inline-flex">
                   {continueLabel} <ChevronIcon className="size-4" />
                 </button>
               </form>
@@ -589,7 +616,7 @@ export function CheckoutPage() {
                       {form.address}{form.landmark ? `, near ${form.landmark}` : ''}, {form.city}, {form.state} {form.pin}
                     </p>
                     <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-success">
-                      <TruckIcon className="size-4" /> Delivery in 3–5 working days
+                      <TruckIcon className="size-4" /> {routeFor?.etaDays ? `Delivery in about ${routeFor.etaDays} ${routeFor.etaDays === 1 ? 'day' : 'days'}` : 'Delivery in 3–5 working days'}
                     </p>
                   </div>
                   <button type="button" onClick={() => setStep(0)} className="btn btn-outline btn-sm shrink-0 self-start">
@@ -677,7 +704,7 @@ export function CheckoutPage() {
                             <span className="min-w-0 flex-1">
                               <span className="block font-extrabold text-ink">Cash on delivery</span>
                               <span className="block text-xs text-muted">
-                                {codAvailable ? 'Pay by cash or UPI to the delivery partner when it arrives' : `Available on orders up to ${formatPrice(settings.codMaxOrder)}`}
+                                {codAvailable ? 'Pay by cash or UPI to the delivery partner when it arrives' : courierNoCod ? `Not offered for PIN code ${form.pin}` : `Available on orders up to ${formatPrice(settings.codMaxOrder)}`}
                               </span>
                             </span>
                           </button>
@@ -695,7 +722,7 @@ export function CheckoutPage() {
                         <span className="text-lg font-extrabold text-ink">{formatPrice(cart.total)}</span>
                       </div>
 
-                      <button type="button" onClick={placeOrder} disabled={processing} className="btn btn-accent btn-lg hidden w-full lg:inline-flex">
+                      <button type="button" onClick={placeOrder} disabled={processing || undeliverable} className="btn btn-accent btn-lg hidden w-full lg:inline-flex">
                         <LockIcon className="size-4" /> {payLabel}
                       </button>
                       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 pt-1 text-[11px] font-bold text-muted">
@@ -861,7 +888,7 @@ export function CheckoutPage() {
                     )}
                   </div>
 
-                  <button type="button" onClick={placeOrder} disabled={processing} className="btn btn-accent btn-lg mt-8 hidden w-full lg:inline-flex">
+                  <button type="button" onClick={placeOrder} disabled={processing || undeliverable} className="btn btn-accent btn-lg mt-8 hidden w-full lg:inline-flex">
                     <LockIcon className="size-4" /> {payLabel}
                   </button>
                   <p className="mt-3 hidden text-center text-xs text-muted lg:block">
@@ -879,7 +906,7 @@ export function CheckoutPage() {
 
       {step === 0 && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/95 p-4 shadow-[0_-10px_30px_-12px_rgb(21_32_51/0.2)] backdrop-blur lg:hidden">
-          <button type="submit" form="checkout-details" disabled={savingAddress || addresses.isLoading} className="btn btn-accent btn-lg w-full">
+          <button type="submit" form="checkout-details" disabled={savingAddress || addresses.isLoading || undeliverable} className="btn btn-accent btn-lg w-full">
             {continueLabel} <ChevronIcon className="size-4" />
           </button>
         </div>
@@ -887,7 +914,7 @@ export function CheckoutPage() {
 
       {step === 1 && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/95 p-4 shadow-[0_-10px_30px_-12px_rgb(21_32_51/0.2)] backdrop-blur lg:hidden">
-          <button type="button" onClick={placeOrder} disabled={processing} className="btn btn-accent btn-lg w-full">
+          <button type="button" onClick={placeOrder} disabled={processing || undeliverable} className="btn btn-accent btn-lg w-full">
             <LockIcon className="size-4" /> {payLabel}
           </button>
         </div>

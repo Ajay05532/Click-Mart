@@ -17,4 +17,4 @@ for (const file of ['.htaccess', 'index.html', 'spa.html', 'sitemap.xml', 'robot
 }
 rmSync(zip, { force: true })
 execFileSync('zip', ['-qr', '-X', zip, '.', '-x', '*.DS_Store'], { cwd: dist, stdio: 'inherit' })
-console.log(`package: ${zip} (${Math.round(statSync(zip).size / 1024)} KB). Upload it to public_html and Extract (it includes .htaccess).`)
+console.log(`package: ${zip} (${Math.round(statSync(zip).size / 1024)} KB). Upload it to the theclickmart.com folder (not public_html) and Extract (it includes .htaccess).`)

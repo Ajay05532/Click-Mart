@@ -340,7 +340,18 @@ catalogRouter.post('/cart/quote', async (req, res) => {
         .min(1)
         .max(50),
       couponCode: z.string().trim().max(40).nullish(),
+      // Optional delivery details: checks the route and, with courier rates on, prices delivery for real.
+      pin: z.string().regex(/^\d{6}$/).nullish(),
+      state: z.string().trim().max(60).nullish(),
+      paymentMethod: z.enum(['UPI', 'CARD', 'NETBANKING', 'COD']).nullish(),
     })
     .parse(req.body)
-  res.json(await buildQuote(data.items, data.couponCode, req.auth?.id))
+  res.json(
+    await buildQuote(
+      data.items,
+      data.couponCode,
+      req.auth?.id,
+      data.pin ? { pin: data.pin, state: data.state ?? null, paymentMode: data.paymentMethod === 'COD' ? 'cod' : 'prepaid' } : null,
+    ),
+  )
 })

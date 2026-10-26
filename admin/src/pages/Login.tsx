@@ -26,6 +26,11 @@ const AlertIcon = ({ className = 'size-4' }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`${className} shrink-0`} aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7.5v5.5M12 16.5h.01" /></svg>
 )
 
+const ShieldIcon = ({ className = 'size-4 shrink-0' }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true"><path d="M12 3 5 6v6c0 4.2 2.8 7.2 7 8.5 4.2-1.3 7-4.3 7-8.5V6l-7-3Z" /><path d="m9 12 2 2 4-4" /></svg>
+)
+const STORE_URL = (import.meta.env.VITE_STOREFRONT_URL as string | undefined) || (import.meta.env.DEV ? 'http://localhost:5173' : '')
+
 const FEATURES: { title: string; text: string; path: ReactNode }[] = [
   { title: 'Orders and delivery', text: 'Confirm, pack, ship and refund from one queue.', path: <path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5v-9ZM3 7.5l9 4.5 9-4.5M12 12v9" /> },
   { title: 'Catalogue and stock', text: 'Pack sizes, prices and live inventory.', path: <path d="M4 6h16M4 12h16M4 18h10" /> },
@@ -105,42 +110,68 @@ export function LoginPage() {
   const bare = 'h-12 min-w-0 flex-1 bg-transparent text-[15px] font-medium text-ink outline-none focus-visible:outline-none! placeholder:font-normal placeholder:text-muted/60'
 
   return (
-    <div className="grid min-h-svh grid-cols-1 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
-      <aside className="relative hidden overflow-hidden bg-ink p-12 text-white lg:flex lg:flex-col lg:justify-between lg:gap-10 xl:p-16">
-        <div className="pointer-events-none absolute -top-32 -right-24 size-[28rem] rounded-full bg-accent/25 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-40 -left-32 size-[26rem] rounded-full bg-brand/60 blur-3xl" />
-        <div className="relative flex items-center gap-3">
-          <span className="grid size-11 place-items-center rounded-xl bg-accent text-xl font-extrabold shadow-lg shadow-accent/30">C</span>
-          <span className="text-lg font-extrabold tracking-tight">ClickMart Admin</span>
-        </div>
-        <div className="relative">
-          <h2 className="max-w-md text-4xl leading-[1.1] font-extrabold tracking-tight">Run your store from one place.</h2>
-          <p className="mt-4 max-w-md text-white/60">Everything your team needs to keep orders moving and shelves stocked.</p>
-          <ul className="mt-8 grid max-w-xl grid-cols-1 gap-3 min-[1500px]:grid-cols-2">
+    <div className="relative flex min-h-svh items-center justify-center overflow-hidden bg-canvas px-4 py-8 sm:px-6 sm:py-12">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgb(18_58_134/0.07)_1px,transparent_0)] [background-size:22px_22px]" />
+      <div aria-hidden="true" className="pointer-events-none absolute -top-40 -left-40 size-[30rem] rounded-full bg-brand/15 blur-3xl" />
+      <div aria-hidden="true" className="pointer-events-none absolute -right-32 -bottom-40 size-[28rem] rounded-full bg-accent/20 blur-3xl" />
+
+      <div className="relative grid w-full max-w-5xl grid-cols-1 overflow-hidden rounded-[28px] border border-line/80 bg-white shadow-[0_30px_80px_-30px_rgb(18_58_134/0.35)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <aside className="relative hidden min-w-0 flex-col overflow-hidden bg-gradient-to-br from-brand via-brand-dark to-[#081f4d] p-10 text-white lg:flex">
+          <div aria-hidden="true" className="pointer-events-none absolute -top-24 -right-24 size-72 rounded-full bg-accent/30 blur-3xl" />
+          <div className="relative flex items-center gap-3">
+            <span className="grid h-12 place-items-center rounded-xl bg-white px-2.5 shadow-lg shadow-black/20">
+              <img src="/logo.png" alt="ClickMart" className="h-9 w-auto" />
+            </span>
+            <span>
+              <span className="block text-base font-extrabold tracking-tight">ClickMart</span>
+              <span className="block text-[11px] font-bold tracking-[0.18em] text-orange-300 uppercase">Seller dashboard</span>
+            </span>
+          </div>
+
+          <h2 className="relative mt-10 text-[2rem] leading-[1.15] font-extrabold tracking-tight">
+            Run your store
+            <br />
+            <span className="text-orange-300">from one place.</span>
+          </h2>
+          <p className="relative mt-3 max-w-sm text-sm leading-6 text-white/65">Orders, stock, offers, support and reports, for you and your team.</p>
+
+          <ol className="relative mt-8 flex flex-wrap items-center gap-1.5 text-[11px] font-bold" aria-label="Order flow">
+            {['Placed', 'Packed', 'Shipped', 'Delivered'].map((step, index, all) => (
+              <li key={step} className="flex items-center gap-1.5">
+                <span className={`rounded-full px-2.5 py-1 ring-1 ${index === all.length - 1 ? 'bg-emerald-400/20 text-emerald-200 ring-emerald-300/30' : 'bg-white/10 text-white/85 ring-white/15'}`}>{step}</span>
+                {index < all.length - 1 && <span aria-hidden="true" className="text-white/35">→</span>}
+              </li>
+            ))}
+          </ol>
+
+          <ul className="relative mt-6 grid grid-cols-2 gap-2.5">
             {FEATURES.map((item) => (
-              <li key={item.title} className="flex items-start gap-3.5 rounded-2xl border border-white/10 bg-white/5 p-3.5 backdrop-blur-sm">
-                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-white/10 text-accent">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="size-5" aria-hidden="true">{item.path}</svg>
+              <li key={item.title} className="rounded-2xl border border-white/10 bg-white/[0.06] p-3.5 backdrop-blur-sm">
+                <span className="grid size-8 place-items-center rounded-lg bg-white/10 text-orange-300">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="size-[18px]" aria-hidden="true">{item.path}</svg>
                 </span>
-                <span>
-                  <span className="block text-sm font-bold">{item.title}</span>
-                  <span className="mt-0.5 block text-xs leading-relaxed text-white/55">{item.text}</span>
-                </span>
+                <span className="mt-2.5 block text-[13px] font-bold">{item.title}</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-white/55">{item.text}</span>
               </li>
             ))}
           </ul>
-        </div>
-        <p className="relative text-xs text-white/40">Authorised staff only. Activity is logged.</p>
-      </aside>
 
-      <main className="flex min-h-svh flex-col items-center justify-center bg-canvas px-4 py-10 sm:px-6">
-        <div className="mb-8 flex items-center gap-3 lg:hidden">
-          <span className="grid size-10 place-items-center rounded-xl bg-accent text-lg font-extrabold text-white">C</span>
-          <span className="text-lg font-extrabold tracking-tight">ClickMart Admin</span>
-        </div>
-        <form onSubmit={submit} noValidate className="w-full max-w-md rounded-3xl border border-line/80 bg-white p-6 shadow-card sm:p-10">
-          <h1 className="text-2xl font-extrabold tracking-tight sm:text-[1.75rem]">Welcome back</h1>
-          <p className="mt-1.5 text-sm text-muted">Sign in with your staff or administrator account.</p>
+          <p className="relative mt-auto flex items-center gap-2 pt-10 text-xs text-white/50">
+            <ShieldIcon /> Authorised staff only. Every action is logged.
+          </p>
+        </aside>
+
+        <main className="min-w-0 px-5 py-9 sm:px-12 sm:py-12">
+          <div className="mb-8 flex items-center gap-3 lg:hidden">
+            <img src="/logo.png" alt="ClickMart" className="h-10 w-auto" />
+            <span className="text-[11px] font-bold tracking-[0.18em] text-accent-dark uppercase">Seller dashboard</span>
+          </div>
+          <form onSubmit={submit} noValidate>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-soft px-3 py-1 text-[11px] font-extrabold tracking-wide text-brand">
+            <LockIcon /> Staff and admin sign-in
+          </span>
+          <h1 className="mt-4 text-[1.75rem] leading-tight font-extrabold tracking-tight sm:text-3xl">Welcome back</h1>
+          <p className="mt-2 text-sm text-muted">Sign in to manage orders, products and your team.</p>
 
           {problem?.field === 'form' && (
             <div role="alert" className="mt-6 flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-sm font-semibold text-rose-700">
@@ -223,10 +254,22 @@ export function LoginPage() {
             </div>
           </div>
 
-          <Button type="submit" variant="accent" className="mt-7 h-12 w-full text-[15px]" loading={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
-          <p className="mt-6 text-center text-xs text-muted">Secure sign-in. Your sessions are protected and every action is logged.</p>
-        </form>
-      </main>
+          <Button type="submit" variant="accent" className="mt-7 h-12 w-full text-[15px] shadow-[0_10px_24px_-10px_rgb(244_123_32/0.8)]" loading={busy}>{busy ? 'Signing in…' : 'Sign in to dashboard'}</Button>
+          </form>
+
+          <div className="mt-7 space-y-3 border-t border-line pt-6 text-xs text-muted">
+            <p className="flex items-start gap-2">
+              <ShieldIcon className="mt-px size-4 shrink-0 text-brand" />
+              Need access? Ask the store owner to add you under Team.
+            </p>
+            {STORE_URL && (
+              <a href={STORE_URL} className="inline-flex items-center gap-1 font-bold text-brand hover:underline">
+                ← Back to the store
+              </a>
+            )}
+          </div>
+        </main>
+      </div>
     </div>
   )
 }

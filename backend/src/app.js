@@ -14,8 +14,9 @@ import { geoRouter } from './routes/location.js'
 import { meRouter } from './routes/me.js'
 import { ordersRouter, paymentsRouter, paymentWebhook } from './routes/orders.js'
 import { supportRouter } from './routes/support.js'
+import { shippingWebhook } from './routes/shippingWebhook.js'
 import { clearPublicCache } from './services/publicCache.js'
-const CATALOGUE_WRITES = /^\/api\/v1\/(admin|checkout|orders|payments)(\/|$)/
+const CATALOGUE_WRITES = /^\/api\/v1\/(admin|checkout|orders|payments|shipping)(\/|$)/
 export function createApp() {
   const app = express()
   app.set('trust proxy', 1)
@@ -62,6 +63,7 @@ export function createApp() {
     }),
     paymentWebhook,
   )
+  app.post('/api/v1/shipping/webhook', express.raw({ type: '*/*', limit: '1mb' }), shippingWebhook)
   app.use(
     express.json({
       limit: '1mb',

@@ -4,6 +4,7 @@ import { ApiError, api, errorMessage } from '../lib/api.ts'
 import type { Pack, Product } from '../types.ts'
 import { useAuth } from './AuthContext.tsx'
 import { useNotice } from './NoticeContext.tsx'
+import { useDeliveryLocation } from './LocationContext.tsx'
 import { TrashIcon } from '../components/icons.tsx'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog.tsx'
 
@@ -37,9 +38,18 @@ type Quote = {
   couponCode: string | null
   freeShippingApplied: boolean
   savings: number
+  delivery: DeliveryCheck | null
 }
 
+/** The server's answer for the delivery PIN: can a courier reach it, and is cash on delivery offered there. */
+export type DeliveryCheck = { deliverable: boolean; reason: string | null; codAvailable: boolean; etaDays: number | null; pin: string }
+export type DeliveryTarget = { pin: string; state?: string | null; paymentMethod?: 'UPI' | 'CARD' | 'NETBANKING' | 'COD' }
+
 type CartContextValue = {
+  /** Route check for the checkout address (or the header "Deliver to" PIN); null until a PIN is known. */
+  delivery: DeliveryCheck | null
+  /** Checkout sets its address PIN and payment method here so prices and checks use them; null goes back to the header PIN. */
+  setDeliveryTarget: (target: DeliveryTarget | null) => void
   lines: ResolvedLine[]
   /** Pack quantities, known instantly without waiting for the server price. */
   items: CartLine[]
@@ -145,6 +155,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [cacheTick, setCacheTick] = useState(0)
   const [couponCode, setCouponCode] = useState<string | null>(() => localStorage.getItem(COUPON_KEY))
   const notify = useNotice()
+  const { location: headerLocation } = useDeliveryLocation()
+  const headerPin = headerLocation?.pin ?? null
+  const headerState = headerLocation?.state ?? null
+  const [target, setDeliveryTarget] = useState<DeliveryTarget | null>(null)
+  const deliverTo = useMemo<DeliveryTarget | null>(() => target ?? (headerPin ? { pin: headerPin, state: headerState } : null), [target, headerPin, headerState])
   const synced = useRef<string | null>(null)
   const linesRef = useRef(lines)
   useEffect(() => {
@@ -190,11 +205,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [lines, user])
 
   const quote = useQuery({
-    queryKey: ['quote', lines, couponCode],
+    queryKey: ['quote', lines, couponCode, deliverTo],
     queryFn: ({ queryKey }) => {
       const items = queryKey[1] as CartLine[]
       const code = queryKey[2] as string | null
-      return api<Quote>('/cart/quote', { body: { items, couponCode: code } })
+      const where = queryKey[3] as DeliveryTarget | null
+      return api<Quote>('/cart/quote', { body: { items, couponCode: code, ...(where ? { pin: where.pin, state: where.state ?? null, paymentMethod: where.paymentMethod ?? null } : {}) } })
     },
     enabled: lines.length > 0,
     placeholderData: keepPreviousData,
@@ -321,6 +337,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const subtotal = covered ? resolved.reduce((sum, line) => sum + line.lineTotal, 0) : (data?.subtotal ?? 0)
   const value = useMemo<CartContextValue>(
     () => ({
+      delivery: data?.delivery ?? null,
+      setDeliveryTarget,
       lines: resolved,
       items: lines,
       count: lines.reduce((sum, line) => sum + line.quantity, 0),

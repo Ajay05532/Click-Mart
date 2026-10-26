@@ -1,6 +1,9 @@
 import { badRequest, conflict } from '../utils/errors.js'
 import { count, from, rows } from '../database/db.js'
 import { getSettings } from './settings.js'
+import { checkDelivery } from './delivery.js'
+/** Dry fruit packs are light; stands in for a pack whose weight was never filled in on the product. */
+export const DEFAULT_ITEM_GRAMS = 250
 export async function loadActiveOffers() {
   const now = Date.now()
   const all = await rows(from('Offer').select('*').eq('isActive', true))
@@ -78,6 +81,7 @@ export async function priceItems(items) {
       stock: variant.stock,
       hsnCode: variant.product.hsnCode ?? null,
       gstPercent: variant.product.gstPercent ?? 0,
+      weightGrams: variant.weightGrams ?? null,
     }
   })
 }
@@ -121,7 +125,12 @@ function eligibleSubtotal(coupon, lines) {
     .filter((line) => !restricted || coupon.productIds.includes(line.productId) || coupon.categoryIds.includes(line.categoryId))
     .reduce((sum, line) => sum + line.unitPrice * line.quantity, 0)
 }
-export async function buildQuote(items, couponCode, userId) {
+/**
+ * Prices a cart. With `where` (delivery PIN, state, payment mode) it also checks the route with
+ * services/delivery.js: the answer is returned as `delivery`, and when Settings uses courier rates the
+ * delivery charge is NimbusPost's cheapest real rate instead of the flat fee.
+ */
+export async function buildQuote(items, couponCode, userId, where = null) {
   const [lines, settings] = await Promise.all([priceItems(items), getSettings()])
   const subtotal = lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0)
   const offerDiscount = lines.reduce((sum, line) => sum + (line.basePrice - line.unitPrice) * line.quantity, 0)
@@ -140,10 +149,17 @@ export async function buildQuote(items, couponCode, userId) {
     }
   }
   const qualifiesFree = subtotal >= settings.freeShippingThreshold
-  const shipping = freeShipping || qualifiesFree ? 0 : settings.shippingFee
+  let delivery = null
+  if (where?.pin) {
+    const weightGrams = lines.reduce((sum, line) => sum + (line.weightGrams || DEFAULT_ITEM_GRAMS) * line.quantity, 0)
+    delivery = await checkDelivery(settings, { pin: where.pin, state: where.state, paymentMode: where.paymentMode ?? 'prepaid', weightGrams, orderValue: subtotal - couponDiscount })
+  }
+  const courierRate = settings.shippingMode === 'courier' && delivery?.courierCharge != null ? delivery.courierCharge : null
+  const shipping = freeShipping || qualifiesFree ? 0 : (courierRate ?? settings.shippingFee)
   const total = Math.max(0, subtotal - couponDiscount + shipping)
   const mrpTotal = lines.reduce((sum, line) => sum + line.mrp * line.quantity, 0)
   return {
+    delivery: delivery && { deliverable: delivery.deliverable, reason: delivery.reason, codAvailable: delivery.codAvailable, etaDays: delivery.etaDays, pin: where.pin },
     lines,
     subtotal,
     offerDiscount,
