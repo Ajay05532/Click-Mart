@@ -705,6 +705,14 @@ ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "providerOrderId" TEXT;
 ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "providerOrderNumber" TEXT;
 ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "providerStatus" TEXT;
 ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "ewayBillNumber" TEXT;
+-- Return pickup (a reverse courier order from the buyer back to our warehouse), see migrations/2026-10-26-courier-returns.sql.
+ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "returnProviderOrderId" TEXT;
+ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "returnAwb" TEXT;
+ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "returnCourier" TEXT;
+ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "returnStatus" TEXT;
+ALTER TABLE sales."Shipment" ADD COLUMN IF NOT EXISTS "returnReason" TEXT;
+CREATE INDEX IF NOT EXISTS "Shipment_providerOrderId_idx" ON sales."Shipment"("providerOrderId");
+CREATE INDEX IF NOT EXISTS "Shipment_returnProviderOrderId_idx" ON sales."Shipment"("returnProviderOrderId");
 
 -- Refund: money sent back against a payment.
 CREATE TABLE IF NOT EXISTS payment."Refund" (

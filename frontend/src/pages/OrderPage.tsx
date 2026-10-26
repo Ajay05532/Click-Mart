@@ -265,8 +265,25 @@ function Milestone({ status }: { status: OrderStatus }) {
  * progress above (Milestone) is still the main picture, moved along by hand until that is automated. */
 function LiveTracking({ code }: { code: string }) {
   const { data, isLoading } = useOrderTracking(code)
-  if (isLoading || !data?.available) return null
+  if (isLoading || !data) return null
+  const back = data.returnPickup
+  const returnPanel = back && (
+    <section className="card mt-5 flex items-start gap-3 border-orange-200 bg-orange-50/60 px-4 py-4 sm:px-8" aria-label="Return pickup">
+      <TruckIcon className="mt-0.5 size-5 shrink-0 text-accent-dark" />
+      <div className="text-sm">
+        <p className="font-extrabold">{back.status === 'delivered' ? 'Your return has reached us' : 'Return pickup arranged'}</p>
+        <p className="mt-0.5 text-muted">
+          {back.status === 'delivered'
+            ? 'We will check the items and update you about the refund.'
+            : `A courier${back.courier ? ` (${back.courier})` : ''} will collect the parcel from your address.${back.awb ? ` Tracking number ${back.awb}.` : ''} Keep it packed and ready.`}
+        </p>
+      </div>
+    </section>
+  )
+  if (!data.available) return returnPanel || null
   return (
+    <>
+    {returnPanel}
     <section className="card mt-5 px-4 py-5 sm:px-8" aria-label="Live courier tracking">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="flex items-center gap-2 text-xs font-extrabold tracking-[0.14em] text-muted uppercase">
@@ -296,6 +313,7 @@ function LiveTracking({ code }: { code: string }) {
         </ol>
       )}
     </section>
+    </>
   )
 }
 

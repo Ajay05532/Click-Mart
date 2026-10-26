@@ -4,7 +4,7 @@ import { from, exec, maybe } from '../database/db.js'
 import { badRequest } from '../utils/errors.js'
 import { actor, requireAuth } from '../middleware/auth.js'
 import { publicSettings } from '../services/publicCache.js'
-import { checkPincodeServiceability, nimbuspostEnabled } from '../services/nimbuspost.js'
+import { checkDelivery, isBlocked } from '../services/delivery.js'
 const columns = 'pin,city,state,area,label,lat,lng'
 const locationSchema = z.object({
   pin: z.string().regex(/^\d{6}$/, 'Enter a 6-digit PIN code'),
@@ -134,21 +134,10 @@ function toPlace(hit) {
 async function withDeliverable(place) {
   if (!place) return place
   const settings = await publicSettings()
-  const blockedPins = settings.nonServiceablePincodes ?? []
-  const blockedStates = settings.nonServiceableStates ?? []
-  const pinBlocked = place.pin && blockedPins.includes(place.pin)
-  const stateBlocked = place.state && blockedStates.some((state) => state.trim().toLowerCase() === place.state.trim().toLowerCase())
-  if (pinBlocked || stateBlocked) return { ...place, deliverable: false }
-  if (place.pin && nimbuspostEnabled() && settings.pickupPincode) {
-    try {
-      const { deliverable } = await checkPincodeServiceability(settings.pickupPincode, place.pin)
-      return { ...place, deliverable }
-    } catch (error) {
-      console.error('NimbusPost serviceability check failed', error)
-      // A broken or rate-limited API call should not block a shopper from checking out: default to deliverable.
-    }
-  }
-  return { ...place, deliverable: true }
+  if (!place.pin) return { ...place, deliverable: !isBlocked(settings, null, place.state) }
+  // Same rules as the cart and checkout (services/delivery.js), so the picker never promises what checkout refuses.
+  const { deliverable } = await checkDelivery(settings, { pin: place.pin, state: place.state })
+  return { ...place, deliverable }
 }
 export const geoRouter = Router()
 geoRouter.get('/search', async (req, res) => {
@@ -186,24 +175,22 @@ geoRouter.get('/reverse', async (req, res) => {
     }),
   })
 })
-geoRouter.get('/pin/:pin', async (req, res) => {
-  const pin = z
-    .string()
-    .regex(/^\d{6}$/, 'Enter a 6-digit PIN code')
-    .parse(req.params.pin)
+/** City, state and area for a 6-digit PIN code (OpenStreetMap), or null when it is not found. */
+export async function lookupPin(pin) {
   const hits = await nominatim('/search', {
     postalcode: pin,
     countrycodes: 'in',
     limit: '1',
   })
-  if (!hits.length)
-    return res.json({
-      place: null,
-    })
+  return hits.length ? { ...toPlace(hits[0]), pin } : null
+}
+geoRouter.get('/pin/:pin', async (req, res) => {
+  const pin = z
+    .string()
+    .regex(/^\d{6}$/, 'Enter a 6-digit PIN code')
+    .parse(req.params.pin)
+  const place = await lookupPin(pin)
   res.json({
-    place: await withDeliverable({
-      ...toPlace(hits[0]),
-      pin,
-    }),
+    place: place ? await withDeliverable(place) : null,
   })
 })

@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { conflict, forbidden, HttpError, notFound, unauthorized } from '../utils/errors.js'
 import { changeStatus, createOrder, failPayment, loadOrder, markPaid } from '../services/orders.js'
 import { nimbuspostEnabled, trackOrder } from '../services/nimbuspost.js'
-import { cancelProviderBooking, providerBooking } from '../services/shipping.js'
+import { providerBooking } from '../services/shipping.js'
 import { exec, from, one, maybe, rows } from '../database/db.js'
 import { ORDER_SELECT } from '../database/selects.js'
 import { paymentProvider } from '../services/payments.js'
@@ -112,16 +112,10 @@ ordersRouter.post('/orders/:code/cancel', requireAuth, async (req, res) => {
       reason: z.string().trim().max(200).optional(),
     })
     .parse(req.body ?? {}).reason
+  // changeStatus also cancels the NimbusPost booking (best-effort), the same as an admin cancellation.
   await changeStatus(order.id, 'CANCELLED', {
     note: reason ? `Cancelled by customer: ${reason}` : 'Cancelled by customer',
   })
-  // Best-effort: the customer's own cancellation always succeeds even if NimbusPost is unreachable right
-  // now; a stuck booking shows up in the admin drawer, which can retry it.
-  if (nimbuspostEnabled()) {
-    await cancelProviderBooking(order.id, reason ? `Cancelled by customer: ${reason}` : 'Cancelled by customer').catch((error) =>
-      console.error('NimbusPost cancel failed for order', order.id, error),
-    )
-  }
   res.json({
     order: serializeOrder(await loadOrder(order.id)),
   })
@@ -129,10 +123,15 @@ ordersRouter.post('/orders/:code/cancel', requireAuth, async (req, res) => {
 ordersRouter.get('/orders/:code/tracking', requireAuth, async (req, res) => {
   const order = await loadOwned(req, String(req.params.code))
   const shipment = await providerBooking(order.id)
-  if (!shipment?.providerOrderId || !nimbuspostEnabled()) return res.json({ available: false })
+  const returnPickup =
+    shipment?.returnProviderOrderId && shipment.returnStatus !== 'cancelled'
+      ? { status: shipment.returnStatus, awb: shipment.returnAwb, courier: shipment.returnCourier }
+      : null
+  if (!shipment?.providerOrderId || !nimbuspostEnabled()) return res.json({ available: false, returnPickup })
   const tracking = await trackOrder(shipment.providerOrderId).catch(() => null)
-  if (!tracking) return res.json({ available: false })
+  if (!tracking) return res.json({ available: false, returnPickup })
   res.json({
+    returnPickup,
     available: true,
     status: tracking.orderStatus,
     latest: tracking.latest ?? null,

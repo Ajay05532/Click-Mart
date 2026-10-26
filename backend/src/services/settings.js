@@ -22,6 +22,13 @@ export const settingDefaults = {
   // The NimbusPost warehouse id (or code) orders are booked from. Required to create a NimbusPost order;
   // pick one from GET /admin/nimbuspost/warehouses, or add one from Settings -> Delivery first.
   nimbuspostWarehouseId: '',
+  // 'flat': shippingFee below the free-delivery threshold. 'courier': NimbusPost's cheapest real rate for the
+  // shopper's PIN and cart weight (falls back to shippingFee when NimbusPost cannot answer).
+  shippingMode: 'flat',
+  // Create the NimbusPost order as soon as an order is confirmed (COD placed, online paid). Staff still book.
+  autoCreateShipments: true,
+  // Move orders to Shipped / Out for delivery / Delivered / Returned from NimbusPost's tracking webhook.
+  autoStatusFromCourier: true,
 }
 /** Sample values an older schema.sql wrote. They are never real, so they fall back to the defaults above. */
 const OLD_SAMPLES = {

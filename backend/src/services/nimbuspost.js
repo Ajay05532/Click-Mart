@@ -1,7 +1,8 @@
 // NimbusPost Partner API (v2): https://api-v2.nimbuspost.com/docs/reference/v2
 // Auth is a key pair sent as headers, not a bearer token. Every response is { success, data, meta } or
-// { success: false, error }. Used today for pincode serviceability and the admin's real delivery-rate
-// check; shipment booking/tracking can reuse `npFetch`.
+// { success: false, error }. Covers serviceability and rates, orders (forward and return), courier booking,
+// pickups, labels, tracking and webhook subscriptions.
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { env } from '../config/env.js'
 
 export const nimbuspostEnabled = () => Boolean(env.NIMBUSPOST_API_KEY && env.NIMBUSPOST_API_SECRET)
@@ -44,18 +45,6 @@ async function serviceability({ pickupPincode, deliveryPincode, paymentMode, pac
   return data
 }
 
-/**
- * Whether at least one courier can carry a parcel from our pickup PIN to this delivery PIN. A light,
- * store-sized package stands in for the real one, since this runs before a cart exists (home page "Set PIN").
- */
-export async function checkPincodeServiceability(pickupPincode, deliveryPincode, paymentMode = 'prepaid') {
-  const data = await serviceability({ pickupPincode, deliveryPincode, paymentMode, packages: [{ weight: 500, length: 15, width: 12, height: 10 }] })
-  return {
-    deliverable: (data.available ?? []).length > 0,
-    reason: data.available?.length ? null : (data.excluded?.[0]?.reason ?? null),
-  }
-}
-
 /** A box big enough for the order's weight. We don't track per-product dimensions, so this is an estimate. */
 function packageFor(weightGrams) {
   if (weightGrams <= 1000) return { weight: weightGrams, length: 20, width: 15, height: 8 }
@@ -65,7 +54,8 @@ function packageFor(weightGrams) {
 
 /**
  * The real delivery charge for an order: every courier NimbusPost offers on this route for this order's
- * actual weight, value and payment mode, cheapest first. Used by the admin order drawer.
+ * actual weight, value and payment mode, cheapest first. Used by the admin order drawer and, through
+ * services/delivery.js, by the location picker, cart quote and checkout.
  */
 export async function getDeliveryRates({ pickupPincode, deliveryPincode, paymentMode, weightGrams, orderValuePaise }) {
   const data = await serviceability({ pickupPincode, deliveryPincode, paymentMode, packages: [packageFor(weightGrams)], orderValuePaise })
@@ -98,16 +88,38 @@ export const sendWarehouseOtp = (phone, purpose) => npFetch('/warehouses/otp/sen
 
 export const verifyWarehouseOtp = (phone, otp, purpose) => npFetch('/warehouses/otp/verify', { method: 'POST', body: { phone, otp, purpose } })
 
-export function createWarehouse({ name, address, contactName, contactPhone, verificationId, isPrimary }) {
+/** Returns go back to the same warehouse (`rto_same_as_pickup`), so no second address or OTP is needed. */
+export function createWarehouse({ name, address, contactName, contactPhone, contactEmail, verificationId, gst, isPrimary }) {
   return npFetch('/warehouses', {
     method: 'POST',
     body: {
       name,
       address,
-      contact_person: { name: contactName, phone: contactPhone, phone_verified: true, verification_id: verificationId },
+      contact_person: { name: contactName, phone: contactPhone, ...(contactEmail ? { email: contactEmail } : {}), phone_verified: true, verification_id: verificationId },
+      ...(gst ? { gst } : {}),
+      rto_same_as_pickup: true,
       ...(isPrimary ? { is_primary: true } : {}),
     },
   })
+}
+
+// Far-apart PIN codes (Delhi, Mumbai, Bengaluru, Kolkata) to ask "will any courier collect from here?".
+const PROBE_DESTINATIONS = ['110001', '400001', '560001', '700001']
+
+/**
+ * Whether couriers will pick up from this PIN code: a light parcel from it to a few major cities. Serviceable
+ * when at least one courier serves at least one of them. Uses the same cached rate check as checkout.
+ */
+export async function pickupServiceable(pin) {
+  const results = await Promise.all(
+    PROBE_DESTINATIONS.filter((to) => to !== pin).map((to) =>
+      serviceability({ pickupPincode: pin, deliveryPincode: to, paymentMode: 'prepaid', packages: [{ weight: 500, length: 20, width: 15, height: 8 }] }).catch(() => null),
+    ),
+  )
+  const answered = results.filter(Boolean)
+  if (!answered.length) throw new Error('NimbusPost did not answer the serviceability check')
+  const couriers = new Set(answered.flatMap((data) => (data.available ?? []).map((courier) => courier.courierDisplayName ?? courier.courierName)))
+  return { serviceable: couriers.size > 0, couriers: [...couriers].filter(Boolean).slice(0, 8) }
 }
 
 /* ---------------- Orders ---------------- */
@@ -196,3 +208,65 @@ export const trackBulk = (awbs) => npFetch('/tracking/bulk', { method: 'POST', b
 /** Same shape as trackByAwb, for an order's current AWB — the one to use once we have an order id but may
  * not have (or trust) a stored AWB. 404s with NO_SHIPMENT if the order was never booked. */
 export const trackOrder = (orderId) => npFetch(`/tracking/order/${encodeURIComponent(orderId)}`)
+
+/* ---------------- Returns ---------------- */
+export const RETURN_REASONS = ['wrong_item', 'damaged_item', 'quality_issue', 'buyer_changed_mind', 'excess_quantity', 'counterfeit_item', 'late_delivery', 'other']
+
+/**
+ * A return (reverse pickup): the courier collects the parcel from the buyer's address and brings it to our
+ * warehouse. `parentOrderId` is the forward NimbusPost order, which must already be `delivered` there.
+ * Returns are always prepaid (nothing is collected from the buyer).
+ */
+export function createReturnOrder({ parentOrderId, orderNumber, reason, note, warehouseId, weightGrams, address, items }) {
+  return npFetch('/orders', {
+    method: 'POST',
+    body: {
+      order_number: orderNumber,
+      order_type: 'reverse',
+      payment_mode: 'prepaid',
+      parent_order_id: parentOrderId,
+      return_reason: reason,
+      ...(note ? { return_reason_note: note } : {}),
+      warehouse_id: warehouseId,
+      shipping_address: {
+        name: address.name,
+        email: address.email || undefined,
+        address: address.line,
+        pincode: Number(address.pin),
+        city: address.city,
+        state: address.state,
+        country: 'India',
+        phone: Number(address.phone),
+      },
+      items: items.map((item) => ({
+        name: item.name,
+        qty: item.quantity,
+        price: Math.round((item.unitPriceInclGst / (1 + (item.gstPercent ?? 0) / 100)) * 100) / 100,
+        sku: item.sku || undefined,
+        hsn: item.hsnCode || undefined,
+        tax_rate: item.gstPercent ?? 0,
+      })),
+      package: orderPackageFor(weightGrams),
+    },
+  })
+}
+
+/* ---------------- Webhooks ---------------- */
+export const WEBHOOK_EVENTS = ['order.updated', 'tracking.updated']
+
+export const listWebhooks = () => npFetch('/webhooks')
+
+/** Registers our endpoint. We send our own secret (NIMBUSPOST_WEBHOOK_SECRET) so it never has to be stored. */
+export const registerWebhook = (url) =>
+  npFetch('/webhooks', { method: 'POST', body: { name: 'ClickMart', url, events: WEBHOOK_EVENTS, secret: env.NIMBUSPOST_WEBHOOK_SECRET } })
+
+export const webhookSecretSet = () => (env.NIMBUSPOST_WEBHOOK_SECRET ?? '').length >= 16
+
+/** `x-nimbus-signature` is `sha256=` + hex HMAC-SHA256 of the raw body, keyed with our subscription secret. */
+export function verifyWebhookSignature(rawBody, header) {
+  if (!webhookSecretSet() || typeof header !== 'string') return false
+  const expected = `sha256=${createHmac('sha256', env.NIMBUSPOST_WEBHOOK_SECRET).update(rawBody).digest('hex')}`
+  const a = Buffer.from(header)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}

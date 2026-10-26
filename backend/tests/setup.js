@@ -7,5 +7,6 @@ const defaults = {
   SUPPORT_INBOUND_EMAIL: 'support@inbound.example.com',
   SUPPORT_INBOUND_SECRET: 'test-inbound-secret-0123456789',
   PASSWORD_PEPPER: 'test-pepper-0123456789abcdef0123456789abcdef',
+  NIMBUSPOST_WEBHOOK_SECRET: 'test-nimbus-webhook-secret-0123',
 }
 for (const [key, value] of Object.entries(defaults)) process.env[key] ??= value

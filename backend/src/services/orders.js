@@ -2,6 +2,7 @@ import { badRequest, notFound } from '../utils/errors.js'
 import { exec, from, maybe, one, rpc } from '../database/db.js'
 import { sendOrderConfirmation, sendOrderStatus, sendRefundIssued } from './emails.js'
 import { buildQuote } from './pricing.js'
+import { autoCreateShipment, cancelProviderBooking } from './shipping.js'
 import { paymentProvider } from './payments.js'
 import { getSettings } from './settings.js'
 import { orderCode } from '../utils/serializers.js'
@@ -46,7 +47,17 @@ async function resolvePaymentDetail(input, userId) {
 export async function createOrder(input, userId) {
   const settings = await getSettings()
   if (input.paymentMethod === 'COD' && !settings.codEnabled) throw badRequest('Cash on delivery is not available right now')
-  const quote = await buildQuote(input.items, input.couponCode, userId)
+  const quote = await buildQuote(input.items, input.couponCode, userId, {
+    pin: input.address.pin,
+    state: input.address.state,
+    paymentMode: input.paymentMethod === 'COD' ? 'cod' : 'prepaid',
+  })
+  if (quote.delivery && !quote.delivery.deliverable) {
+    throw badRequest(`We cannot deliver to PIN code ${input.address.pin} yet. Please choose another address.`, { code: 'NOT_DELIVERABLE' })
+  }
+  if (input.paymentMethod === 'COD' && quote.delivery && !quote.delivery.codAvailable) {
+    throw badRequest(`Cash on delivery is not available for PIN code ${input.address.pin}. Please pay online.`, { code: 'NO_COD' })
+  }
   if (input.paymentMethod === 'COD' && quote.total > settings.codMaxOrder) {
     throw badRequest(`Cash on delivery is available up to ₹${settings.codMaxOrder}. Please pay online.`)
   }
@@ -114,6 +125,7 @@ export async function createOrder(input, userId) {
       }),
     )
     void sendOrderConfirmation(created.id)
+    void autoCreateShipment(created.id)
   }
   await exec(
     from('Order')
@@ -133,7 +145,10 @@ export async function markPaid(providerOrderId, providerPaymentId, raw) {
     p_payment_id: providerPaymentId,
     p_raw: raw ?? null,
   })
-  if (result.changed) void sendOrderConfirmation(result.orderId)
+  if (result.changed) {
+    void sendOrderConfirmation(result.orderId)
+    void autoCreateShipment(result.orderId)
+  }
   // The money arrived after the order was cancelled (window expired, or the shopper gave up and paid later):
   // send it straight back. If Razorpay refuses, the order stays "Paid" and cancelled, and the admin can refund it.
   if (result.needsRefund) await refundOrder(result.orderId).catch((error) => console.error('late payment refund failed', result.orderId, error))
@@ -165,6 +180,10 @@ export async function changeStatus(orderId, to, opts = {}) {
   if (to === 'CANCELLED' && result.paymentStatus === 'PAID' && result.paymentMethod !== 'COD') {
     // The cancellation email already explains the refund, so no separate refund email here.
     await refundOrder(orderId, { notify: false }).catch((error) => console.error('auto-refund failed', error))
+  }
+  if (to === 'CANCELLED') {
+    // Best-effort: a NimbusPost hiccup never blocks or reverses our own cancellation; the admin drawer can retry.
+    await cancelProviderBooking(orderId, opts.note ?? 'Order cancelled').catch((error) => console.error('NimbusPost cancel failed for order', orderId, error))
   }
   void sendOrderStatus(orderId, to)
 }

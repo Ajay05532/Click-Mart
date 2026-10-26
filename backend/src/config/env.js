@@ -36,6 +36,9 @@ const schema = z.object({
   NIMBUSPOST_API_KEY: z.string().optional(),
   NIMBUSPOST_API_SECRET: z.string().optional(),
   NIMBUSPOST_BASE_URL: z.string().default('https://api-v2.nimbuspost.com/v2'),
+  // Signs NimbusPost's tracking webhooks (we register it with them). At least 16 characters; without it,
+  // every NimbusPost webhook is refused and order status is only changed by hand.
+  NIMBUSPOST_WEBHOOK_SECRET: z.string().min(16).optional(),
 })
 const cleaned = Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== ''))
 const parsed = schema.safeParse(cleaned)

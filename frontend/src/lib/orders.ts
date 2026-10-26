@@ -56,6 +56,8 @@ export type OrderTracking = {
   latest?: { shipStatus: string; location: string; message: string; eventTime: string } | null
   scans?: { timestamp: string; status: string; location: string; remark: string }[]
   trackingUrl?: string | null
+  /** Set once the shop has arranged a courier to collect a return from the customer. */
+  returnPickup?: { status: string | null; awb: string | null; courier: string | null } | null
 }
 
 /** Real courier tracking from NimbusPost, once a courier has been booked. Not every order has one — most

@@ -6,7 +6,7 @@ import { useAuth } from '../auth.tsx'
 import { useAction } from '../hooks.ts'
 import { dateTime, inr, label } from '../format.ts'
 import type { Order, OrderStatus, Paged } from '../types.ts'
-import { Badge, Button, Card, Drawer, EmptyState, ErrorState, Field, Input, Modal, PageHeader, PageLoader, Pagination, SearchBox, Table, Tabs, Td, Textarea, Thumb, errorMessage, useUi, type Tone } from '../ui.tsx'
+import { Badge, Button, Card, Drawer, EmptyState, ErrorState, Field, Input, Modal, PageHeader, PageLoader, Pagination, SearchBox, Select, Table, Tabs, Td, Textarea, Thumb, errorMessage, useUi, type Tone } from '../ui.tsx'
 
 type DeliveryRate = {
   deliverable: boolean
@@ -27,7 +27,19 @@ type NimbusPostOrder = {
   latest?: { shipStatus: string; location: string; message: string; eventTime: string } | null
   scans?: { timestamp: string; status: string; location: string; remark: string }[]
   trackingUrl?: string | null
+  returnPickup?: { orderId: string; status: string | null; awb: string | null; courierName: string | null; reason: string | null } | null
 }
+
+const RETURN_REASONS: [string, string][] = [
+  ['damaged_item', 'Damaged item'],
+  ['wrong_item', 'Wrong item'],
+  ['quality_issue', 'Quality issue'],
+  ['excess_quantity', 'Extra quantity sent'],
+  ['buyer_changed_mind', 'Customer changed their mind'],
+  ['late_delivery', 'Late delivery'],
+  ['counterfeit_item', 'Counterfeit item'],
+  ['other', 'Other'],
+]
 
 const statusTone: Record<OrderStatus, Tone> = { PLACED: 'gray', CONFIRMED: 'blue', PACKED: 'blue', SHIPPED: 'orange', OUT_FOR_DELIVERY: 'orange', DELIVERED: 'green', CANCELLED: 'red', RETURNED: 'red' }
 export const OrderStatusBadge = ({ status }: { status: OrderStatus }) => <Badge tone={statusTone[status]}>{label(status)}</Badge>
@@ -205,7 +217,7 @@ function OrderDrawer({ id, onClose }: { id: string; onClose: () => void }) {
           </div>
 
           <DeliveryRateCard orderId={id} />
-          <NimbusPostBookingCard orderId={id} />
+          <NimbusPostBookingCard orderId={id} orderStatus={order.status} />
 
           <section>
             <h3 className="text-xs font-bold tracking-wider text-muted uppercase">Timeline</h3>
@@ -268,9 +280,14 @@ function DeliveryRateCard({ orderId }: { orderId: string }) {
 }
 
 /** Books, tracks and cancels this order's real NimbusPost order — separate from the delivery-rate quote above. */
-function NimbusPostBookingCard({ orderId }: { orderId: string }) {
+function NimbusPostBookingCard({ orderId, orderStatus }: { orderId: string; orderStatus: OrderStatus }) {
   const { confirm } = useUi()
   const [addingEway, setAddingEway] = useState(false)
+  const [arrangingReturn, setArrangingReturn] = useState(false)
+  const cancelReturn = useAction(() => api(`/admin/orders/${orderId}/nimbuspost/return/cancel`, { method: 'POST', body: {} }), {
+    success: 'Return pickup cancelled',
+    invalidate: ['order-nimbuspost'],
+  })
   const [pickingCourier, setPickingCourier] = useState(false)
   const [pickupDate, setPickupDate] = useState('')
   const query = useQuery({ queryKey: ['order-nimbuspost', orderId], queryFn: () => api<NimbusPostOrder>(`/admin/orders/${orderId}/nimbuspost`) })
@@ -354,6 +371,40 @@ function NimbusPostBookingCard({ orderId }: { orderId: string }) {
               </Button>
             </div>
           )}
+          {np.returnPickup ? (
+            <div className="mt-2 rounded-lg bg-orange-50 p-3 text-xs">
+              <p className="flex flex-wrap items-center gap-2 font-bold text-orange-900">
+                Return pickup
+                <Badge tone={np.returnPickup.status === 'delivered' ? 'green' : 'orange'}>{(np.returnPickup.status ?? 'created').replace(/_/g, ' ')}</Badge>
+              </p>
+              <p className="mt-1 text-orange-900/80">
+                {RETURN_REASONS.find(([value]) => value === np.returnPickup?.reason)?.[1] ?? 'Return'}
+                {np.returnPickup.awb ? ` · AWB ${np.returnPickup.awb}` : ' · courier not booked yet'}
+                {np.returnPickup.courierName ? ` · ${np.returnPickup.courierName}` : ''}
+              </p>
+              {np.returnPickup.status !== 'delivered' && (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  className="mt-2"
+                  loading={cancelReturn.isPending}
+                  onClick={async () => {
+                    if (await confirm({ title: 'Cancel this return pickup?', text: 'The courier will not collect the parcel from the customer.', confirmLabel: 'Cancel pickup', danger: true })) cancelReturn.mutate(undefined)
+                  }}
+                >
+                  Cancel return pickup
+                </Button>
+              )}
+            </div>
+          ) : (
+            orderStatus === 'DELIVERED' &&
+            np.awb && (
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-canvas p-3 text-xs">
+                <span className="text-muted">Customer wants to send it back? The courier collects it from their address and brings it to your warehouse.</span>
+                <Button size="sm" variant="outline" onClick={() => setArrangingReturn(true)}>Arrange return pickup</Button>
+              </div>
+            )
+          )}
           {np.scans && np.scans.length > 0 && (
             <ol className="mt-2 space-y-1 border-t border-line pt-2 text-xs">
               {np.scans.slice(0, 6).map((scan, index) => (
@@ -367,8 +418,51 @@ function NimbusPostBookingCard({ orderId }: { orderId: string }) {
         </div>
       )}
       {addingEway && <EwayBillModal orderId={orderId} current={np?.ewayBillNumber ?? ''} onClose={() => setAddingEway(false)} />}
+      {arrangingReturn && <ReturnPickupModal orderId={orderId} onClose={() => setArrangingReturn(false)} />}
       {pickingCourier && <ChooseCourierModal orderId={orderId} onClose={() => setPickingCourier(false)} onPick={(courierId) => book.mutate(courierId)} busy={book.isPending} />}
     </section>
+  )
+}
+
+/** A NimbusPost reverse order: the courier collects from the customer and delivers to our warehouse. When it
+ * arrives, the tracking webhook marks the order Returned (stock goes back). Refunds stay a separate choice. */
+function ReturnPickupModal({ orderId, onClose }: { orderId: string; onClose: () => void }) {
+  const [reason, setReason] = useState('damaged_item')
+  const [note, setNote] = useState('')
+  const [book, setBook] = useState(true)
+  const save = useAction(() => api<{ returnAwb: string | null; booked: boolean }>(`/admin/orders/${orderId}/nimbuspost/return`, { method: 'POST', body: { reason, note: note.trim() || undefined, book } }), {
+    success: (r) => (r.booked && r.returnAwb ? `Return pickup booked · AWB ${r.returnAwb}` : 'Return pickup created. Book a courier from NimbusPost.'),
+    invalidate: ['order-nimbuspost'],
+    onDone: onClose,
+  })
+  return (
+    <Modal
+      title="Arrange return pickup"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="accent" loading={save.isPending} onClick={() => save.mutate(undefined)}>Arrange pickup</Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <Field label="Why is it coming back?">
+          <Select value={reason} onChange={(e) => setReason(e.target.value)}>
+            {RETURN_REASONS.map(([value, text]) => (
+              <option key={value} value={value}>{text}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Note for the courier (optional)"><Input value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Pouch torn, 1 of 2 packs" /></Field>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={book} onChange={(e) => setBook(e.target.checked)} /> Book the cheapest courier now
+        </label>
+        <p className="rounded-lg bg-canvas px-3 py-2 text-xs text-muted">
+          The pickup is charged to your NimbusPost wallet. When the parcel reaches your warehouse the order is marked Returned and its stock goes back. Refund the customer from this drawer when you have checked the items.
+        </p>
+      </div>
+    </Modal>
   )
 }
 
